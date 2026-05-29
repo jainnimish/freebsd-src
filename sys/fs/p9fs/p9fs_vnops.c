@@ -115,17 +115,16 @@ p9fs_cleanup(struct p9fs_node *np)
 	if ((np->flags & P9FS_NODE_IN_SESSION) != 0) {
 		P9FS_NODE_CLRF(np, P9FS_NODE_IN_SESSION);
 		STAILQ_REMOVE(&vses->virt_node_list, np, p9fs_node, p9fs_node_next);
+		P9FS_UNLOCK(vses);
+
+		/* Invalidate all entries to a particular vnode. */
+		cache_purge(vp);
+
+		/* Destroy the vm object and flush associated pages. */
+		vnode_destroy_vobject(vp);
 	} else {
 		P9FS_UNLOCK(vses);
-		return;
 	}
-	P9FS_UNLOCK(vses);
-
-	/* Invalidate all entries to a particular vnode. */
-	cache_purge(vp);
-
-	/* Destroy the vm object and flush associated pages. */
-	vnode_destroy_vobject(vp);
 
 	/* Remove all the FID */
 	p9fs_fid_remove_all(np, 0);

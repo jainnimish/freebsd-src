@@ -388,7 +388,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	return (0);
 out:
 	/* Something went wrong, dispose the node */
-	if (!IS_ROOT(np)) {
+	if (np != NULL && !IS_ROOT(np)) {
 		p9fs_destroy_node(&np);
 	}
 
