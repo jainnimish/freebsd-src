@@ -74,10 +74,6 @@ p9fs_dispose_node(struct p9fs_node **npp)
 	if (node == NULL)
 		return;
 
-	if (node->parent && node->parent != node) {
-		vrele(P9FS_NTOV(node->parent));
-	}
-
 	P9_DEBUG(VOPS, "%s: node: %p\n", __func__, *npp);
 
 	vp = P9FS_NTOV(node);
@@ -329,7 +325,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		P9FS_VOFID_LOCK_INIT(np);
 		STAILQ_INIT(&np->vofid_list);
 
-		vref(P9FS_NTOV(parent));
 		np->parent = parent;
 		np->p9fs_ses = vses; /* Map the current session */
 		inode = &np->inode;

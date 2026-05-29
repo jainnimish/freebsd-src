@@ -132,19 +132,9 @@ p9fs_prepare_to_close(struct mount *mp)
 {
 	struct p9fs_session *vses;
 	struct p9fs_mount *vmp;
-	struct p9fs_node *np, *pnp, *tmp;
 
 	vmp = VFSTOP9(mp);
 	vses = &vmp->p9fs_session;
-
-	/* break the node->parent references */
-	STAILQ_FOREACH_SAFE(np, &vses->virt_node_list, p9fs_node_next, tmp) {
-		if (np->parent && np->parent != np) {
-			pnp = np->parent;
-			np->parent = NULL;
-			vrele(P9FS_NTOV(pnp));
-		}
-	}
 
 	/* We are about to teardown, we dont allow anything other than clunk after this.*/
 	p9_client_begin_disconnect(vses->clnt);
@@ -187,16 +177,18 @@ p9fs_close_session(struct mount *mp)
  * as well as destroy/clunk them.
  */
 void
-p9fs_fid_remove_all(struct p9fs_node *np, int leave_ofids)
+p9fs_fid_remove_all(struct p9fs_node *np, int leave_fids)
 {
 	struct p9_fid *fid, *tfid;
 
-	STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
-		STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
-		p9_client_clunk(fid);
+	if (!(leave_fids & 2)) {
+		STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
+			STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
+			p9_client_clunk(fid);
+		}
 	}
 
-	if (!leave_ofids) {
+	if (!(leave_fids & 1)) {
 		STAILQ_FOREACH_SAFE(fid, &np->vofid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vofid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
@@ -384,6 +376,7 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 		return (fid);
 
 	/* Get full path from root to p9fs node */
+	P9_DEBUG(VOPS, "%s was called\n", __func__);
 	nwnames = p9fs_get_full_path(np, &wnames);
 
 	/*
