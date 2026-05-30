@@ -42,6 +42,7 @@
 #include <fs/p9fs/p9_client.h>
 #include <fs/p9fs/p9_debug.h>
 #include <fs/p9fs/p9_transport.h>
+#include <fs/p9fs/linux_errno.h>
 
 #define QEMU_HEADER 7
 #define P9FS_MAX_FID_CNT (1024 * 1024 * 1024)
@@ -64,6 +65,69 @@ SYSCTL_INT(_vfs_p9fs, OID_AUTO, debug_level, CTLFLAG_RW,
 static struct p9_req_t *p9_get_request(struct p9_client *c, int *error);
 static struct p9_req_t *p9_client_request(
     struct p9_client *c, int8_t type, int *error, const char *fmt, ...);
+
+/*
+ * Translate Linux errors to BSD.
+ */
+static int const el2bsd[] = {
+	[LINUX_EDEADLK] = EDEADLK,
+	[LINUX_EAGAIN] = EAGAIN,
+	[LINUX_EINPROGRESS] = EINPROGRESS,
+	[LINUX_EALREADY] = EALREADY,
+	[LINUX_ENOTSOCK] = ENOTSOCK,
+	[LINUX_EDESTADDRREQ] = EDESTADDRREQ,
+	[LINUX_EMSGSIZE] = EMSGSIZE,
+	[LINUX_EPROTOTYPE] = EPROTOTYPE,
+	[LINUX_ENOPROTOOPT] = ENOPROTOOPT,
+	[LINUX_EPROTONOSUPPORT] = EPROTONOSUPPORT,
+	[LINUX_ESOCKTNOSUPPORT] = ESOCKTNOSUPPORT,
+	[LINUX_EOPNOTSUPP] = EOPNOTSUPP,
+	[LINUX_EPFNOSUPPORT] = EPFNOSUPPORT,
+	[LINUX_EAFNOSUPPORT] = EAFNOSUPPORT,
+	[LINUX_EADDRINUSE] = EADDRINUSE,
+	[LINUX_EADDRNOTAVAIL] = EADDRNOTAVAIL,
+	[LINUX_ENETDOWN] = ENETDOWN,
+	[LINUX_ENETUNREACH] = ENETUNREACH,
+	[LINUX_ENETRESET] = ENETRESET,
+	[LINUX_ECONNABORTED] = ECONNABORTED,
+	[LINUX_ECONNRESET] = ECONNRESET,
+	[LINUX_ENOBUFS] = ENOBUFS,
+	[LINUX_EISCONN] = EISCONN,
+	[LINUX_ENOTCONN] = ENOTCONN,
+	[LINUX_ESHUTDOWN] = ESHUTDOWN,
+	[LINUX_ETOOMANYREFS] = ETOOMANYREFS,
+	[LINUX_ETIMEDOUT] = ETIMEDOUT,
+	[LINUX_ECONNREFUSED] = ECONNREFUSED,
+	[LINUX_ELOOP] = ELOOP,
+	[LINUX_ENAMETOOLONG] = ENAMETOOLONG,
+	[LINUX_EHOSTDOWN] = EHOSTDOWN,
+	[LINUX_EHOSTUNREACH] = EHOSTUNREACH,
+	[LINUX_ENOTEMPTY] = ENOTEMPTY,
+	[LINUX_EUSERS] = EUSERS,
+	[LINUX_EDQUOT] = EDQUOT,
+	[LINUX_ESTALE] = ESTALE,
+	[LINUX_EREMOTE] = EREMOTE,
+	[LINUX_ENOLCK] = ENOLCK,
+	[LINUX_ENOSYS] = ENOSYS,
+	[LINUX_EIDRM] = EIDRM,
+	[LINUX_ENOMSG] = ENOMSG,
+	[LINUX_EOVERFLOW] = EOVERFLOW,
+	[LINUX_ECANCELED] = ECANCELED,
+	[LINUX_EILSEQ] = EILSEQ,
+	[LINUX_EBADMSG] = EBADMSG,
+	[LINUX_EMULTIHOP] = EMULTIHOP,
+	[LINUX_ENOLINK] = ENOLINK,
+	[LINUX_EPROTO] = EPROTO,
+#ifdef ECAPMODE
+	[EPERM] = ECAPMODE,
+#endif
+#ifdef ENOTRECOVERABLE
+	[LINUX_ENOTRECOVERABLE] = ENOTRECOVERABLE,
+#endif
+#ifdef EOWNERDEAD
+	[LINUX_EOWNERDEAD] = EOWNERDEAD,
+#endif
+};
 
 inline int
 p9_is_proto_dotl(struct p9_client *clnt)
@@ -231,7 +295,10 @@ p9_client_check_return(struct p9_client *c, struct p9_req_t *req)
 		goto out;
 
 	/* if there was an ecode error make this the err now */
-	error = ecode;
+	if (req->rc.id != P9PROTO_RLERROR ||
+	    ((error = el2bsd[ecode]) == 0 && ecode != 0)) {
+			error = ecode;
+	}
 
 	/*
 	 * Note this is still not completely an error, as lookups for files
