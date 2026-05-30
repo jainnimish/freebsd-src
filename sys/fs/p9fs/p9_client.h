@@ -102,7 +102,6 @@ struct p9_fid {
 	struct p9_qid qid;	/* server identifier */
 	uint32_t mtu;		/* max transferrable unit at a time */
 	uid_t uid;		/* numeric uid of the local user who owns this handle */
-	int v_opens;		/* keep count on the number of opens called with this fiel handle */
 	STAILQ_ENTRY(p9_fid) fid_next;	/* points to next fid in the list */
 };
 

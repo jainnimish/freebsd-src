@@ -261,6 +261,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	uint32_t hash;
 	int error, error_reload = 0;
 	struct p9fs_inode *inode;
+	struct p9_fid *vfid;
 
 	td = curthread;
 	vmp = VFSTOP9(mp);
@@ -279,10 +280,15 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 			*vpp = vp;
 			return (0);
 		}
+		node = vp->v_data;
+		vfid = p9fs_get_fid(node->p9fs_ses->clnt, node, curthread->td_ucred, VFID, -1, &error);
+		if (vfid == NULL)
+			p9fs_fid_add(node, fid, VFID);
+
 		error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
 		if (error != 0) {
-			node = vp->v_data;
 			/* Remove stale vnode from hash list */
+			p9fs_fid_remove(node, fid, VFID);
 			vfs_hash_remove(vp);
 			P9FS_NODE_SETF(node, P9FS_NODE_DELETED);
 
@@ -292,7 +298,8 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		} else {
 			*vpp = vp;
 			/* Clunk the new fid if not root */
-			p9_client_clunk(fid);
+			if (vfid != NULL)
+				p9_client_clunk(fid);
 			return (0);
 		}
 	}
@@ -309,6 +316,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	/* Allocate a new vnode. */
 	if ((error = getnewvnode("p9fs", mp, &p9fs_vnops, &vp)) != 0) {
 		*vpp = NULL;
+		p9_client_clunk(fid);
 		P9_DEBUG(ERROR, "%s: getnewvnode failed: %d\n", __func__, error);
 		return (error);
 	}

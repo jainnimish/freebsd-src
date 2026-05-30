@@ -181,14 +181,14 @@ p9fs_fid_remove_all(struct p9fs_node *np, int leave_fids)
 {
 	struct p9_fid *fid, *tfid;
 
-	if (!(leave_fids & 2)) {
+	if (leave_fids & KEEP_VOFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
 		}
 	}
 
-	if (!(leave_fids & 1)) {
+	if (leave_fids & KEEP_VFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vofid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vofid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
@@ -353,10 +353,9 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	 * Search for the fid in corresponding fid list.
 	 * We should return NULL for VOFID if it is not present in the list.
 	 * Because VOFID should have been created during the file open.
-	 * If VFID is not present in the list then we should create one.
 	 */
 	fid = p9fs_get_fid_from_uid(np, uid, fid_type, mode);
-	if (fid != NULL || fid_type == VOFID)
+	if (!IS_ROOT(np) || fid_type == VOFID)
 		return (fid);
 
 	/* Check root if the user is attached */
@@ -375,8 +374,12 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	if (IS_ROOT(np))
 		return (fid);
 
+	/* p9fs_lookup should have added a VFID if it wasn't present.
+	 * TODO: Verify we cannot get here and return an error.
+	 */
+	P9_DEBUG(VOPS, "%s: No VFID found\n", __func__);
+
 	/* Get full path from root to p9fs node */
-	P9_DEBUG(VOPS, "%s was called\n", __func__);
 	nwnames = p9fs_get_full_path(np, &wnames);
 
 	/*

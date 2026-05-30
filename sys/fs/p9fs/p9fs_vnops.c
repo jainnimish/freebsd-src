@@ -169,7 +169,7 @@ p9fs_inactive(struct vop_inactive_args *ap)
 	if (np->flags & P9FS_NODE_DELETED)
 		vrecycle(vp);
 	else
-		p9fs_fid_remove_all(np, 2);
+		p9fs_fid_remove_all(np, KEEP_VFID);
 
 
 	return (0);
@@ -319,14 +319,23 @@ p9fs_lookup(struct vop_lookup_args *ap)
 	if (error == -1) {
 		vp = *vpp;
 		/* Check if the entry in cache is stale or not */
-		if ((p9fs_node_cmp(vp, &newfid->qid) == 0) &&
-		    ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) == 0)) {
-			goto out;
+		struct p9_fid *vfid;
+		np = P9FS_VTON(vp);
+
+		vfid = p9fs_get_fid(np->p9fs_ses->clnt, np, cnp->cn_cred, VFID, -1, &error);
+		if (p9fs_node_cmp(vp, &newfid->qid) == 0) {
+			if (vfid == NULL)
+				p9fs_fid_add(np, newfid, VFID);
+			if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) == 0) {
+				return (0);
+			}
 		}
 		/*
 		 * This case, we have an error coming from getattr,
 		 * act accordingly.
 		 */
+		if (vfid == NULL)
+			p9fs_fid_remove(np, newfid, VFID);
 		cache_purge(vp);
 		if (dvp != vp)
 			vput(vp);
@@ -334,6 +343,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 			vrele(vp);
 
 		*vpp = NULL;
+		np = NULL;
 	} else if (error == ENOENT) {
 		if (VN_IS_DOOMED(dvp))
 			goto out;
@@ -478,7 +488,6 @@ create_common(struct p9fs_node *dnp, struct componentname *cnp,
 
 			if (ofid != NULL) {
 				struct p9fs_node *np = P9FS_VTON(*vpp);
-				ofid->v_opens = 0;
 				/*
 				 * The 9P file creation request natively opens
 				 * the file as part of the create operation and
@@ -720,7 +729,6 @@ p9fs_open(struct vop_open_args *ap)
 	 */
 	vofid = p9fs_get_fid(vses->clnt, np, ap->a_cred, VOFID, mode, &error);
 	if (vofid != NULL) {
-		vofid->v_opens++;
 		return (0);
 	} else {
 		/*vofid is the open fid for this file.*/
@@ -733,7 +741,6 @@ p9fs_open(struct vop_open_args *ap)
 	if (error != 0)
 		p9_client_clunk(vofid);
 	else {
-		vofid->v_opens = 1;
 		filesize = np->inode.i_size;
 		vnode_create_vobject(vp, filesize, ap->a_td);
 		p9fs_fid_add(np, vofid, VOFID);
@@ -743,17 +750,13 @@ p9fs_open(struct vop_open_args *ap)
 }
 
 /*
- * Close the open references. Just reduce the open count on vofid and return.
- * Let clunking of VOFID happen in p9fs_reclaim.
+ * Do nothing. Let clunking happen in p9fs_inactive and p9fs_reclaim.
  */
 static int
 p9fs_close(struct vop_close_args *ap)
 {
 	struct vnode *vp;
 	struct p9fs_node *np;
-	struct p9fs_session *vses;
-	struct p9_fid *vofid;
-	int error;
 
 	vp = ap->a_vp;
 	np = P9FS_VTON(vp);
@@ -761,20 +764,7 @@ p9fs_close(struct vop_close_args *ap)
 	if (np == NULL)
 		return (0);
 
-	vses = np->p9fs_ses;
-	error = 0;
-
 	P9_DEBUG(VOPS, "%s: file_name %s\n", __func__, np->inode.i_name);
-
-	/*
-	 * Translate kernel fflags to 9p mode
-	 */
-	vofid = p9fs_get_fid(vses->clnt, np, ap->a_cred, VOFID,
-	    p9fs_uflags_mode(ap->a_fflag, 1), &error);
-	if (vofid == NULL)
-		return (0);
-
-	vofid->v_opens--;
 
 	return (0);
 }
@@ -1569,7 +1559,7 @@ remove_common(struct p9fs_node *dnp, struct p9fs_node *np, const char *name,
 
 	/* Remove all non-open fids associated with the vp */
 	if (np->inode.i_links_count == 1)
-		p9fs_fid_remove_all(np, 1);
+		p9fs_fid_remove_all(np, KEEP_VOFID);
 
 	/* Invalidate all entries of vnode from name cache and hash list. */
 	cache_purge(vp);
