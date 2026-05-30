@@ -97,7 +97,6 @@ struct p9fs_node {
 	struct mtx vfid_mtx;			/* mutex for vfid list */
 	STAILQ_HEAD( ,p9_fid) vofid_list;	/* vofid related to uid */
 	struct mtx vofid_mtx;			/* mutex for vofid list */
-	struct p9fs_node *parent;		/* pointer to parent p9fs node */
 	struct p9fs_qid vqid;			/* the server qid, will be from the host */
 	struct vnode *v_node;			/* vnode for this fs_node. */
 	struct p9fs_inode inode;		/* in memory representation of ondisk information*/

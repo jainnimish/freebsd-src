@@ -177,7 +177,6 @@ p9fs_inactive(struct vop_inactive_args *ap)
 
 struct p9fs_lookup_alloc_arg {
 	struct componentname *cnp;
-	struct p9fs_node *dnp;
 	struct p9_fid *newfid;
 };
 
@@ -187,7 +186,7 @@ p9fs_lookup_alloc(struct mount *mp, void *arg, int lkflags, struct vnode **vpp)
 {
 	struct p9fs_lookup_alloc_arg *p9aa = arg;
 
-	return (p9fs_vget_common(mp, NULL, p9aa->cnp->cn_lkflags, p9aa->dnp,
+	return (p9fs_vget_common(mp, NULL, p9aa->cnp->cn_lkflags,
 		p9aa->newfid, vpp, p9aa->cnp->cn_nameptr));
 }
 
@@ -366,7 +365,6 @@ p9fs_lookup(struct vop_lookup_args *ap)
 	if (flags & ISDOTDOT) {
 		struct p9fs_lookup_alloc_arg p9aa;
 		p9aa.cnp = cnp;
-		p9aa.dnp = dnp;
 		p9aa.newfid = newfid;
 		error = vn_vget_ino_gen(dvp, p9fs_lookup_alloc, &p9aa, 0, &vp);
 		if (error)
@@ -387,7 +385,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 				goto out;
 
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    dnp, newfid, &vp, cnp->cn_nameptr);
+			    newfid, &vp, cnp->cn_nameptr);
 			if (error)
 				goto out;
 
@@ -404,7 +402,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 			}
 		} else {
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    dnp, newfid, &vp, cnp->cn_nameptr);
+			    newfid, &vp, cnp->cn_nameptr);
 			if (error)
 				goto out;
 			*vpp = vp;
@@ -482,7 +480,7 @@ create_common(struct p9fs_node *dnp, struct componentname *cnp,
 		newfid = p9_client_walk(dvfid, 1, &cnp->cn_nameptr, 1, &error);
 		if (newfid != NULL) {
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    dnp, newfid, vpp, cnp->cn_nameptr);
+			    newfid, vpp, cnp->cn_nameptr);
 			if (error != 0)
 				goto out;
 
@@ -1682,7 +1680,7 @@ p9fs_symlink(struct vop_symlink_args *ap)
 	newfid = p9_client_walk(dvfid, 1, &cnp->cn_nameptr, 1, &error);
 	if (newfid != NULL) {
 		error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-		    dnp, newfid, vpp, cnp->cn_nameptr);
+		    newfid, vpp, cnp->cn_nameptr);
 		if (error != 0)
 			goto out;
 	} else

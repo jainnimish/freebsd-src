@@ -250,7 +250,7 @@ p9fs_destroy_node(struct p9fs_node **npp)
  */
 int
 p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9fs_node *parent, struct p9_fid *fid, struct vnode **vpp,
+    struct p9_fid *fid, struct vnode **vpp,
     char *name)
 {
 	struct p9fs_mount *vmp;
@@ -333,7 +333,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		P9FS_VOFID_LOCK_INIT(np);
 		STAILQ_INIT(&np->vofid_list);
 
-		np->parent = parent;
 		np->p9fs_ses = vses; /* Map the current session */
 		inode = &np->inode;
 		/*Fill the name of the file in inode */
@@ -454,7 +453,6 @@ p9_mount(struct mount *mp)
 	p9fs_fid_add(p9fs_root, fid, VFID);
 	P9FS_VOFID_LOCK_INIT(p9fs_root);
 	STAILQ_INIT(&p9fs_root->vofid_list);
-	p9fs_root->parent = p9fs_root;
 	P9FS_NODE_SETF(p9fs_root, P9FS_NODE_ROOT);
 	p9fs_root->p9fs_ses = vses;
 	vfs_getnewfsid(mp);

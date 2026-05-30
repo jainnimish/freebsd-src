@@ -235,30 +235,6 @@ p9fs_fid_add(struct p9fs_node *np, struct p9_fid *fid, int fid_type)
 	}
 }
 
-/* Build the path from root to current directory */
-static int
-p9fs_get_full_path(struct p9fs_node *np, char ***names)
-{
-	int i, n;
-	struct p9fs_node *node;
-	char **wnames;
-
-	n = 0;
-	for (node = np ; (node != NULL) && !IS_ROOT(node) ; node = node->parent)
-		n++;
-
-	if (node == NULL)
-		return (0);
-
-	wnames = malloc(n * sizeof(char *), M_TEMP, M_ZERO|M_WAITOK);
-
-	for (i = n-1, node = np; i >= 0 ; i--, node = node->parent)
-		wnames[i] = node->inode.i_name;
-
-	*names = wnames;
-	return (n);
-}
-
 /*
  * Return TRUE if this fid can be used for the requested mode.
  */
@@ -322,10 +298,7 @@ p9fs_get_fid_from_uid(struct p9fs_node *np, uid_t uid, int fid_type, int mode)
 /*
  * Function returns the fid sturcture for a file corresponding to current user id.
  * First it searches in the fid list of the corresponding p9fs node.
- * New fid will be created if not already present and added in the corresponding
- * fid list in the p9fs node.
- * If the user is not already attached then this will attach the user first
- * and then create a new fid for this particular file by doing dir walk.
+ * If it needs to attach the root, it will do so.
  */
 struct p9_fid *
 p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
@@ -351,8 +324,9 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 
 	/*
 	 * Search for the fid in corresponding fid list.
-	 * We should return NULL for VOFID if it is not present in the list.
-	 * Because VOFID should have been created during the file open.
+	 * We should return NULL for anything except root
+	 * if it is not present in the list because it should
+	 * have been created during VOP_LOOKUP or VOP_OPEN
 	 */
 	fid = p9fs_get_fid_from_uid(np, uid, fid_type, mode);
 	if (!IS_ROOT(np) || fid_type == VOFID)
@@ -370,42 +344,5 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 		p9fs_fid_add(root, fid, fid_type);
 	}
 
-	/* If we are looking for root then return it */
-	if (IS_ROOT(np))
-		return (fid);
-
-	/* p9fs_lookup should have added a VFID if it wasn't present.
-	 * TODO: Verify we cannot get here and return an error.
-	 */
-	P9_DEBUG(VOPS, "%s: No VFID found\n", __func__);
-
-	/* Get full path from root to p9fs node */
-	nwnames = p9fs_get_full_path(np, &wnames);
-
-	/*
-	 * Could not get full path.
-	 * If p9fs node is not deleted, parent should exist.
-	 */
-	KASSERT(nwnames != 0, ("%s: Directory of %s doesn't exist", __func__, np->inode.i_name));
-
-	clone = 1;
-	i = 0;
-	while (i < nwnames) {
-		l = MIN(nwnames - i, P9_MAXWELEM);
-
-		fid = p9_client_walk(fid, l, wnames, clone, error);
-		if (*error != 0) {
-			if (oldfid)
-				p9_client_clunk(oldfid);
-			fid = NULL;
-			goto bail_out;
-		}
-		oldfid = fid;
-		clone = 0;
-		i += l ;
-	}
-	p9fs_fid_add(np, fid, fid_type);
-bail_out:
-	free(wnames, M_TEMP);
 	return (fid);
 }
