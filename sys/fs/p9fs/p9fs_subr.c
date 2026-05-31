@@ -329,7 +329,7 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	 * have been created during VOP_LOOKUP or VOP_OPEN
 	 */
 	fid = p9fs_get_fid_from_uid(np, uid, fid_type, mode);
-	if (!IS_ROOT(np) || fid_type == VOFID)
+	if (fid != NULL || !IS_ROOT(np) || fid_type == VOFID)
 		return (fid);
 
 	/* Check root if the user is attached */

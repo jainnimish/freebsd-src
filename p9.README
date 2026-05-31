@@ -1,6 +1,6 @@
 TODO:
-- Remap linux error codes to freebsd. We could just make a "new" protocol version for this, and ask the server to send us freebsd codes to avoid translations twice, but I dislike this idea since nothing will be technically different than 2000.L
 - Check if the refactored implementation of get_open_fid is correct.
+- Why is VOP_ACCESS being called after VOP_INACTIVE? RL_ERROR 2, fid not null.
 
 Current changes:
 - Close files in VOP_INACTIVE and VOP_RECLAIM. Remove unused v_opens count.

@@ -854,7 +854,7 @@ p9fs_reload_stats_dotl(struct vnode *vp, struct ucred *cred)
 	vfid = p9fs_get_fid(vses->clnt, node, cred, VOFID, P9PROTO_OREAD, &error);
 	if (vfid == NULL) {
 		vfid = p9fs_get_fid(vses->clnt, node, cred, VFID, -1, &error);
-		if (error)
+		if (error || vfid == NULL)
 			return (error);
 	}
 

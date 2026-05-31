@@ -288,7 +288,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
 		if (error != 0) {
 			/* Remove stale vnode from hash list */
-			p9fs_fid_remove(node, fid, VFID);
 			vfs_hash_remove(vp);
 			P9FS_NODE_SETF(node, P9FS_NODE_DELETED);
 
