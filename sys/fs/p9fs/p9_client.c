@@ -52,6 +52,8 @@
 #define WSTAT_SIZE 47
 #define WSTAT_EXTENSION_SIZE 14
 
+#define N(x)	(sizeof(x) / sizeof(x[0]))
+
 static MALLOC_DEFINE(M_P9CLNT, "p9_client", "p9fs client structure");
 static uma_zone_t p9fs_fid_zone;
 static uma_zone_t p9fs_req_zone;
@@ -295,9 +297,11 @@ p9_client_check_return(struct p9_client *c, struct p9_req_t *req)
 		goto out;
 
 	/* if there was an ecode error make this the err now */
+	/* translate linux errors if using 2000.L */
 	if (req->rc.id != P9PROTO_RLERROR ||
+	    ecode >= N(el2bsd) ||
 	    ((error = el2bsd[ecode]) == 0 && ecode != 0)) {
-			error = ecode;
+		error = ecode;
 	}
 
 	/*
