@@ -177,24 +177,23 @@ p9fs_close_session(struct mount *mp)
  * as well as destroy/clunk them.
  */
 void
-p9fs_fid_remove_all(struct p9fs_node *np, int leave_fids)
+p9fs_fid_remove_all(struct p9fs_node *np, int leave_ofids)
 {
 	struct p9_fid *fid, *tfid;
 
-	if (leave_fids & KEEP_VOFID) {
-		STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
-			STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
-			p9_client_clunk(fid);
-		}
+	STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
+		STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
+		p9_client_clunk(fid);
 	}
 
-	if (leave_fids & KEEP_VFID) {
+	if (!leave_ofids) {
 		STAILQ_FOREACH_SAFE(fid, &np->vofid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vofid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
 		}
 	}
 }
+
 
 
 /* Remove a fid from its corresponding fid list */

@@ -1,8 +1,9 @@
 TODO:
 - Check if the refactored implementation of get_open_fid is correct.
-- Why is VOP_ACCESS being called after VOP_INACTIVE? RL_ERROR 2, fid not null.
 
 Current changes:
 - Close files in VOP_INACTIVE and VOP_RECLAIM. Remove unused v_opens count.
 - Removed need to pin directories by adding new VFID if not found. This also removes the need to track the parent Plan 9 node.
+- Linux errors remapped to FreeBSD
+- Disallow driver unloading if p9fs is mounted
 

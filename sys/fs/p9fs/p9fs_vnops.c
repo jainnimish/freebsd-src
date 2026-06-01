@@ -127,7 +127,7 @@ p9fs_cleanup(struct p9fs_node *np)
 	}
 
 	/* Remove all the FID */
-	p9fs_fid_remove_all(np, KEEP_NONE);
+	p9fs_fid_remove_all(np, FALSE);
 
 	/* Dispose all node knowledge.*/
 	p9fs_destroy_node(&np);
@@ -169,7 +169,7 @@ p9fs_inactive(struct vop_inactive_args *ap)
 	if (np->flags & P9FS_NODE_DELETED)
 		vrecycle(vp);
 	else
-		p9fs_fid_remove_all(np, KEEP_VFID);
+		p9fs_fid_remove_all(np, FALSE);
 
 
 	return (0);
@@ -1557,7 +1557,7 @@ remove_common(struct p9fs_node *dnp, struct p9fs_node *np, const char *name,
 
 	/* Remove all non-open fids associated with the vp */
 	if (np->inode.i_links_count == 1)
-		p9fs_fid_remove_all(np, KEEP_VOFID);
+		p9fs_fid_remove_all(np, TRUE);
 
 	/* Invalidate all entries of vnode from name cache and hash list. */
 	cache_purge(vp);
