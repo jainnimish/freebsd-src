@@ -305,14 +305,10 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
     int fid_type, int mode, int *error)
 {
 	uid_t uid;
-	struct p9_fid *fid, *oldfid;
+	struct p9_fid *fid;
 	struct p9fs_node *root;
 	struct p9fs_session *vses;
-	int i, l, clone;
-	char **wnames = NULL;
-	uint16_t nwnames;
 
-	oldfid = NULL;
 	vses = np->p9fs_ses;
 
 	if (vses->flags & P9_ACCESS_ANY)

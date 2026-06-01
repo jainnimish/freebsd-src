@@ -534,7 +534,7 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		}
 	}
 
-	error = p9fs_vget_common(mp, np, lkflags, np, vfid, vpp, NULL);
+	error = p9fs_vget_common(mp, np, lkflags, vfid, vpp, NULL);
 	if (error != 0) {
 		*vpp = NULL;
 		return (error);

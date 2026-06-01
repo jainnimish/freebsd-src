@@ -189,7 +189,7 @@ void p9fs_prepare_to_close(struct mount *mp);
 void p9fs_complete_close(struct mount *mp);
 int p9fs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp);
 int p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9fs_node *parent, struct p9_fid *fid, struct vnode **vpp,
+    struct p9_fid *fid, struct vnode **vpp,
     char *name);
 int p9fs_node_cmp(struct vnode *vp, void *arg);
 void p9fs_destroy_node(struct p9fs_node **npp);
