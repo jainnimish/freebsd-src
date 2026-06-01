@@ -127,7 +127,7 @@ p9fs_cleanup(struct p9fs_node *np)
 	}
 
 	/* Remove all the FID */
-	p9fs_fid_remove_all(np, 0);
+	p9fs_fid_remove_all(np, KEEP_NONE);
 
 	/* Dispose all node knowledge.*/
 	p9fs_destroy_node(&np);
