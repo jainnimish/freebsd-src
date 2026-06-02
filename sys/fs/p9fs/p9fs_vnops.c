@@ -165,6 +165,9 @@ p9fs_inactive(struct vop_inactive_args *ap)
 	vp = ap->a_vp;
 	np = P9FS_VTON(vp);
 
+	if (np == NULL || vp->v_holdcnt)
+		return (0);
+
 	P9_DEBUG(VOPS, "%s: vp:%p node:%p file:%s\n", __func__, vp, np, np->inode.i_name);
 	if (np->flags & P9FS_NODE_DELETED)
 		vrecycle(vp);
@@ -326,6 +329,8 @@ p9fs_lookup(struct vop_lookup_args *ap)
 			if (vfid == NULL)
 				p9fs_fid_add(np, newfid, VFID);
 			if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) == 0) {
+				if (vfid != NULL)
+					p9_client_clunk(newfid);
 				return (0);
 			}
 		}
