@@ -165,15 +165,15 @@ p9fs_inactive(struct vop_inactive_args *ap)
 	vp = ap->a_vp;
 	np = P9FS_VTON(vp);
 
-	if (vp->v_holdcnt)
+	if (np == NULL)
 		return (0);
 
 	P9_DEBUG(VOPS, "%s: vp:%p node:%p file:%s\n", __func__, vp, np, np->inode.i_name);
+
+	p9fs_fid_remove_all(np, KEEP_VFID);
+
 	if (np->flags & P9FS_NODE_DELETED)
 		vrecycle(vp);
-	else
-		p9fs_fid_remove_all(np, KEEP_VFID);
-
 
 	return (0);
 }
@@ -324,22 +324,25 @@ p9fs_lookup(struct vop_lookup_args *ap)
 		struct p9_fid *vfid;
 		np = P9FS_VTON(vp);
 
-		vfid = p9fs_get_fid(np->p9fs_ses->clnt, np, cnp->cn_cred, VFID, -1, &error);
 		if (p9fs_node_cmp(vp, &newfid->qid) == 0) {
+			P9FS_FID_LOCK(np);
+			vfid = p9fs_get_fid(np->p9fs_ses->clnt, np, cnp->cn_cred, VFID, -1, &error);
 			if (vfid == NULL)
 				p9fs_fid_add(np, newfid, VFID);
+			P9FS_FID_UNLOCK(np);
 			if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) == 0) {
 				if (vfid != NULL)
 					p9_client_clunk(newfid);
 				return (0);
+			} else {
+				if (vfid == NULL)
+					p9fs_fid_remove(np, newfid, VFID);
 			}
 		}
 		/*
 		 * This case, we have an error coming from getattr,
 		 * act accordingly.
 		 */
-		if (vfid == NULL)
-			p9fs_fid_remove(np, newfid, VFID);
 		cache_purge(vp);
 		if (dvp != vp)
 			vput(vp);
