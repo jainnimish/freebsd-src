@@ -290,7 +290,9 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 
 		error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
 		if (error != 0) {
-			/* Remove stale vnode from hash list */
+			/* Remove stale vnode from hash list
+			 * Don't clunk fid because we use it below
+			 */
 			if (vfid == NULL)
 				p9fs_fid_remove(node, fid, VFID);
 			vfs_hash_remove(vp);
@@ -301,7 +303,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 			vp = NULL;
 		} else {
 			*vpp = vp;
-			/* Clunk the new fid if not root */
+			/* Clunk the new fid if not root and we had it already */
 			if (vfid != NULL)
 				p9_client_clunk(fid);
 			return (0);
@@ -394,6 +396,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		 * So cleanup the np allocated above in this context.
 		 */
 		if (!IS_ROOT(np)) {
+			p9fs_fid_remove_all(np, KEEP_NONE);
 			p9fs_destroy_node(&np);
 		}
 	}

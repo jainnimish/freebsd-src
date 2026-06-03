@@ -330,13 +330,16 @@ p9fs_lookup(struct vop_lookup_args *ap)
 			if (vfid == NULL)
 				p9fs_fid_add(np, newfid, VFID);
 			P9FS_FID_UNLOCK(np);
-			if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) == 0) {
+			/* Leave the fid if successful + null vfid, and remove it if error.
+			 * If error, clunking will happen in vget_common.
+			 */
+			if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) != 0) {
+				if (vfid == NULL)
+					p9fs_fid_remove(np, newfid, VFID);
+			} else {
 				if (vfid != NULL)
 					p9_client_clunk(newfid);
 				return (0);
-			} else {
-				if (vfid == NULL)
-					p9fs_fid_remove(np, newfid, VFID);
 			}
 		}
 		/*
