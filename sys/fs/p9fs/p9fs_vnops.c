@@ -1302,20 +1302,15 @@ out:
 
 struct open_fid_state {
 	struct p9_fid *vofid;
-	int fflags;
 	int opened;
 };
 
-/*
- * TODO: change this to take P9PROTO_* mode and avoid routing through
- * VOP_OPEN, factoring out implementation of p9fs_open.
- */
 static int
 p9fs_get_open_fid(struct vnode *vp, int fflags, struct ucred *cr, struct open_fid_state *statep)
 {
 	struct p9fs_node *np;
 	struct p9fs_session *vses;
-	struct p9_fid *vofid;
+	struct p9_fid *vofid, *vfid;
 	int mode = p9fs_uflags_mode(fflags, TRUE);
 	int error = 0;
 
@@ -1323,29 +1318,31 @@ p9fs_get_open_fid(struct vnode *vp, int fflags, struct ucred *cr, struct open_fi
 
 	np = P9FS_VTON(vp);
 	vses = np->p9fs_ses;
+	statep->opened = 0;
+
 	vofid = p9fs_get_fid(vses->clnt, np, cr, VOFID, mode, &error);
 	if (vofid == NULL) {
-		error = VOP_OPEN(vp, fflags, cr, curthread, NULL);
+		/* All the methods that call this function are invoked with a valid vnode.
+		 * So, we do not re-fetch attributes.
+		 */
+		vfid = p9fs_get_fid(vses->clnt, np, cr, VFID, -1, &error);
+		if (error)
+			return (error);
+
+		vofid = p9_client_walk(vfid, 0, NULL, 1, &error);
+		if (error)
+			return (error);
+
+		error = p9_client_open(vofid, mode);
 		if (error) {
+			p9_client_clunk(vofid);
 			return (error);
 		}
-		vofid = p9fs_get_fid(vses->clnt, np, cr, VOFID, mode, &error);
-		if (vofid == NULL) {
-			return (EBADF);
-		}
-		statep->fflags = fflags;
-		statep->opened = TRUE;
+
+		statep->opened = 1;
 	}
 	statep->vofid = vofid;
 	return (0);
-}
-
-static void
-p9fs_release_open_fid(struct vnode *vp, struct ucred *cr, struct open_fid_state *statep)
-{
-	if (statep->opened) {
-		(void) VOP_CLOSE(vp, statep->fflags, cr, curthread);
-	}
 }
 
 /*
@@ -1427,7 +1424,8 @@ p9fs_read(struct vop_read_args *ap)
 	uio->uio_offset = offset;
 out:
 	uma_zfree(p9fs_io_buffer_zone, io_buffer);
-	p9fs_release_open_fid(vp, ap->a_cred, &ostate);
+	if (ostate.opened)
+		p9_client_clunk(ostate.vofid);
 
 	return (error);
 }
@@ -1534,7 +1532,8 @@ p9fs_write(struct vop_write_args *ap)
 out:
 	if (io_buffer)
 		uma_zfree(p9fs_io_buffer_zone, io_buffer);
-	p9fs_release_open_fid(vp, ap->a_cred, &ostate);
+	if (ostate.opened)
+		p9_client_clunk(ostate.vofid);
 
 	return (error);
 }
@@ -2083,7 +2082,8 @@ p9fs_strategy(struct vop_strategy_args *ap)
 	}
 
 	p9fs_doio(vp, bp, ostate.vofid, cr);
-	p9fs_release_open_fid(vp, cr, &ostate);
+	if (ostate.opened)
+		p9_client_clunk(ostate.vofid);
 
 	return (0);
 }
