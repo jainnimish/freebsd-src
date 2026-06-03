@@ -57,7 +57,7 @@
 #define VT9P_LOCK_INIT(_sc) mtx_init(VT9P_MTX(_sc), \
     "VIRTIO 9P CHAN lock", NULL, MTX_DEF)
 #define VT9P_LOCK_DESTROY(_sc) mtx_destroy(VT9P_MTX(_sc))
-#define MAX_SUPPORTED_SGS 20
+#define MAX_SUPPORTED_SGS 64
 static MALLOC_DEFINE(M_P9FS_MNTTAG, "p9fs_mount_tag", "P9fs Mounttag");
 
 struct vt9p_softc {
