@@ -385,7 +385,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 
 	if (*vpp == NULL) {
 		P9FS_LOCK(vses);
-		STAILQ_INSERT_TAIL(&vses->virt_node_list, np, p9fs_node_next);
 		P9FS_NODE_SETF(np, P9FS_NODE_IN_SESSION);
 		P9FS_UNLOCK(vses);
 		vn_set_state(vp, VSTATE_CONSTRUCTED);
@@ -396,7 +395,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		 * So cleanup the np allocated above in this context.
 		 */
 		if (!IS_ROOT(np)) {
-			p9fs_fid_remove_all(np, KEEP_NONE);
 			p9fs_destroy_node(&np);
 		}
 	}

@@ -114,8 +114,6 @@ p9fs_init_session(struct mount *mp, int *error)
 	P9_DEBUG(SUBR, "%s: attach successful fid :%p\n", __func__, fid);
 	fid->uid = vses->uid;
 
-	/* initialize the node list for the session */
-	STAILQ_INIT(&vses->virt_node_list);
 	P9FS_LOCK_INIT(vses);
 
 	P9_DEBUG(SUBR, "%s: INIT session successful\n", __func__);

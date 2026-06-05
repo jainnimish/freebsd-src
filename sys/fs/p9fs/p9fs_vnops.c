@@ -114,7 +114,6 @@ p9fs_cleanup(struct p9fs_node *np)
 	P9FS_LOCK(vses);
 	if ((np->flags & P9FS_NODE_IN_SESSION) != 0) {
 		P9FS_NODE_CLRF(np, P9FS_NODE_IN_SESSION);
-		STAILQ_REMOVE(&vses->virt_node_list, np, p9fs_node, p9fs_node_next);
 		P9FS_UNLOCK(vses);
 
 		/* Invalidate all entries to a particular vnode. */
@@ -1306,19 +1305,17 @@ struct open_fid_state {
 };
 
 static int
-p9fs_get_open_fid(struct vnode *vp, int fflags, struct ucred *cr, struct open_fid_state *statep)
+p9fs_get_open_fid(struct vnode *vp, int mode, struct ucred *cr, struct open_fid_state *statep)
 {
 	struct p9fs_node *np;
 	struct p9fs_session *vses;
 	struct p9_fid *vofid, *vfid;
-	int mode = p9fs_uflags_mode(fflags, TRUE);
 	int error = 0;
 
 	statep->opened = FALSE;
 
 	np = P9FS_VTON(vp);
 	vses = np->p9fs_ses;
-	statep->opened = 0;
 
 	vofid = p9fs_get_fid(vses->clnt, np, cr, VOFID, mode, &error);
 	if (vofid == NULL) {
@@ -1380,7 +1377,7 @@ p9fs_read(struct vop_read_args *ap)
 	if (uio->uio_offset < 0)
 		return (EINVAL);
 
-	error = p9fs_get_open_fid(vp, FREAD, ap->a_cred, &ostate);
+	error = p9fs_get_open_fid(vp, P9PROTO_OREAD, ap->a_cred, &ostate);
 	if (error)
 		return (error);
 
@@ -1457,7 +1454,7 @@ p9fs_write(struct vop_write_args *ap)
 	error = 0;
 	ioflag = ap->a_ioflag;
 
-	error = p9fs_get_open_fid(vp, FWRITE, ap->a_cred, &ostate);
+	error = p9fs_get_open_fid(vp, P9PROTO_OWRITE, ap->a_cred, &ostate);
 	if (error)
 		return (error);
 
@@ -2072,7 +2069,7 @@ p9fs_strategy(struct vop_strategy_args *ap)
 	else
 		cr = bp->b_wcred;
 
-	error = p9fs_get_open_fid(vp, bp->b_iocmd == BIO_READ ? FREAD : FWRITE, cr, &ostate);
+	error = p9fs_get_open_fid(vp, bp->b_iocmd == BIO_READ ? P9PROTO_OREAD : P9PROTO_OWRITE, cr, &ostate);
 	if (error) {
 		P9_DEBUG(ERROR, "%s: p9fs_get_open_fid failed: %d\n", __func__, error);
 		bp->b_error = error;

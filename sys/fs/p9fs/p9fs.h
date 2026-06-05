@@ -108,7 +108,6 @@ struct p9fs_node {
 	struct vnode *v_node;			/* vnode for this fs_node. */
 	struct p9fs_inode inode;		/* in memory representation of ondisk information*/
 	struct p9fs_session *p9fs_ses;	/*  Session_ptr for this node */
-	STAILQ_ENTRY(p9fs_node) p9fs_node_next;
 	struct mtx fid_mtx;
 	u_int flags;
 };
@@ -159,7 +158,6 @@ struct p9fs_session {
 	const char *aname;				/* name of remote file tree being mounted */
 	struct p9_client *clnt;				/* 9p client */
 	struct mtx p9fs_mtx;				/* mutex used for guarding the chain.*/
-	STAILQ_HEAD( ,p9fs_node) virt_node_list;	/* list of p9fs nodes in this session*/
 	struct p9_fid *mnt_fid;				/* to save nobody 's fid for unmounting as root user */
 	unsigned int name_max;				/* cached max filename length */
 };
