@@ -126,7 +126,8 @@ p9fs_cleanup(struct p9fs_node *np)
 	}
 
 	/* Remove all the FID */
-	p9fs_fid_remove_all(np, KEEP_NONE);
+	p9fs_fid_remove_all(np, REMOVE_ALL);
+	p9_client_clunk(np->gfid);
 
 	/* Dispose all node knowledge.*/
 	p9fs_destroy_node(&np);
@@ -169,7 +170,7 @@ p9fs_inactive(struct vop_inactive_args *ap)
 
 	P9_DEBUG(VOPS, "%s: vp:%p node:%p file:%s\n", __func__, vp, np, np->inode.i_name);
 
-	p9fs_fid_remove_all(np, KEEP_VFID);
+	p9fs_fid_remove_all(np, REMOVE_VOFID);
 
 	if (np->flags & P9FS_NODE_DELETED)
 		vrecycle(vp);
@@ -179,6 +180,7 @@ p9fs_inactive(struct vop_inactive_args *ap)
 
 struct p9fs_lookup_alloc_arg {
 	struct componentname *cnp;
+	struct p9fs_node *dnp;
 	struct p9_fid *newfid;
 };
 
@@ -189,7 +191,7 @@ p9fs_lookup_alloc(struct mount *mp, void *arg, int lkflags, struct vnode **vpp)
 	struct p9fs_lookup_alloc_arg *p9aa = arg;
 
 	return (p9fs_vget_common(mp, NULL, p9aa->cnp->cn_lkflags,
-		p9aa->newfid, vpp, p9aa->cnp->cn_nameptr));
+		p9aa->dnp, p9aa->newfid, vpp, p9aa->cnp->cn_nameptr));
 }
 
 /*
@@ -375,6 +377,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 	if (flags & ISDOTDOT) {
 		struct p9fs_lookup_alloc_arg p9aa;
 		p9aa.cnp = cnp;
+		p9aa.dnp = dnp;
 		p9aa.newfid = newfid;
 		error = vn_vget_ino_gen(dvp, p9fs_lookup_alloc, &p9aa, 0, &vp);
 		if (error)
@@ -395,7 +398,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 				goto out;
 
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    newfid, &vp, cnp->cn_nameptr);
+			    dnp, newfid, &vp, cnp->cn_nameptr);
 			if (error)
 				goto out;
 
@@ -412,7 +415,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 			}
 		} else {
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    newfid, &vp, cnp->cn_nameptr);
+			    dnp, newfid, &vp, cnp->cn_nameptr);
 			if (error)
 				goto out;
 			*vpp = vp;
@@ -490,7 +493,7 @@ create_common(struct p9fs_node *dnp, struct componentname *cnp,
 		newfid = p9_client_walk(dvfid, 1, &cnp->cn_nameptr, 1, &error);
 		if (newfid != NULL) {
 			error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-			    newfid, vpp, cnp->cn_nameptr);
+			    dnp, newfid, vpp, cnp->cn_nameptr);
 			if (error != 0)
 				goto out;
 
@@ -1326,6 +1329,13 @@ p9fs_get_open_fid(struct vnode *vp, int mode, struct ucred *cr, struct open_fid_
 		if (error)
 			return (error);
 
+		/*
+		 * This thread likely did not go through VOP_LOOKUP.
+		 * Fallback to the generic fid.
+		 */
+		if (vfid == NULL)
+			vfid = np->gfid;
+
 		vofid = p9_client_walk(vfid, 0, NULL, 1, &error);
 		if (error)
 			return (error);
@@ -1564,7 +1574,7 @@ remove_common(struct p9fs_node *dnp, struct p9fs_node *np, const char *name,
 
 	/* Remove all non-open fids associated with the vp */
 	if (np->inode.i_links_count == 1)
-		p9fs_fid_remove_all(np, KEEP_VOFID);
+		p9fs_fid_remove_all(np, REMOVE_VFID);
 
 	/* Invalidate all entries of vnode from name cache and hash list. */
 	cache_purge(vp);
@@ -1687,7 +1697,7 @@ p9fs_symlink(struct vop_symlink_args *ap)
 	newfid = p9_client_walk(dvfid, 1, &cnp->cn_nameptr, 1, &error);
 	if (newfid != NULL) {
 		error = p9fs_vget_common(mp, NULL, cnp->cn_lkflags,
-		    newfid, vpp, cnp->cn_nameptr);
+		    dnp, newfid, vpp, cnp->cn_nameptr);
 		if (error != 0)
 			goto out;
 	} else

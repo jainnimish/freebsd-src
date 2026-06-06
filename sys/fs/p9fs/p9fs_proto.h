@@ -40,8 +40,8 @@
 #define	P9FS_OTRUNC	0x10
 
 /* FID removal flags */
-#define KEEP_VOFID 1
-#define KEEP_VFID  2
-#define KEEP_NONE  3
+#define REMOVE_VFID  	1
+#define REMOVE_VOFID 	2
+#define REMOVE_ALL   	3
 
 #endif /* FS_P9FS_P9FS_PROTO_H */

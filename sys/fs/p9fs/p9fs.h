@@ -109,6 +109,7 @@ struct p9fs_node {
 	struct p9fs_inode inode;		/* in memory representation of ondisk information*/
 	struct p9fs_session *p9fs_ses;	/*  Session_ptr for this node */
 	struct mtx fid_mtx;
+	struct p9_fid *gfid; 			/* generic fid */
 	u_int flags;
 };
 
@@ -195,7 +196,7 @@ void p9fs_prepare_to_close(struct mount *mp);
 void p9fs_complete_close(struct mount *mp);
 int p9fs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp);
 int p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9_fid *fid, struct vnode **vpp,
+    struct p9fs_node *dnp, struct p9_fid *fid, struct vnode **vpp,
     char *name);
 int p9fs_node_cmp(struct vnode *vp, void *arg);
 void p9fs_destroy_node(struct p9fs_node **npp);

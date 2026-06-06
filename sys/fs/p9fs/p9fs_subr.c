@@ -179,14 +179,14 @@ p9fs_fid_remove_all(struct p9fs_node *np, int leave_fids)
 {
 	struct p9_fid *fid, *tfid;
 
-	if (leave_fids & KEEP_VOFID) {
+	if (leave_fids & REMOVE_VFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
 		}
 	}
 
-	if (leave_fids & KEEP_VFID) {
+	if (leave_fids & REMOVE_VOFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vofid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vofid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);

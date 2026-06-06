@@ -251,7 +251,7 @@ p9fs_destroy_node(struct p9fs_node **npp)
  */
 int
 p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9_fid *fid, struct vnode **vpp,
+    struct p9fs_node *dnp, struct p9_fid *fid, struct vnode **vpp,
     char *name)
 {
 	struct p9fs_mount *vmp;
@@ -346,6 +346,9 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		/*Fill the name of the file in inode */
 		inode->i_name = malloc(strlen(name)+1, M_TEMP, M_NOWAIT | M_ZERO);
 		strlcpy(inode->i_name, name, strlen(name)+1);
+
+		/* Create the generic fid for this node */
+		np->gfid = p9_client_walk(dnp->gfid, 1, &name, 1, &error);
 	} else {
 		vp->v_type = VDIR; /* root vp is a directory */
 		vp->v_vflag |= VV_ROOT;
@@ -357,6 +360,9 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	inode = &np->inode;
 	inode->i_qid_path = fid->qid.path;
 	P9FS_SET_LINKS(inode);
+
+	if (error)
+		goto out;
 
 	lockmgr(vp->v_vnlock, LK_EXCLUSIVE, NULL);
 	if (vp->v_type != VFIFO)
@@ -402,6 +408,9 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	return (0);
 out:
 	/* Something went wrong, dispose the node */
+	if (np->gfid != NULL)
+		p9_client_clunk(np->gfid);
+
 	if (np != NULL && !IS_ROOT(np)) {
 		p9fs_destroy_node(&np);
 	}
@@ -454,6 +463,12 @@ p9_mount(struct mount *mp)
 	if (fid == NULL) {
 		goto out;
 	}
+
+	/* Attach the generic user */
+	p9fs_root->gfid = p9_client_attach(vses->clnt, NULL, "generic", 0,
+	   vses->aname, &error);
+	if (error)
+		goto out;
 
 	P9FS_VFID_LOCK_INIT(p9fs_root);
 	STAILQ_INIT(&p9fs_root->vfid_list);
@@ -543,7 +558,7 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		}
 	}
 
-	error = p9fs_vget_common(mp, np, lkflags, vfid, vpp, NULL);
+	error = p9fs_vget_common(mp, np, lkflags, np, vfid, vpp, NULL);
 	if (error != 0) {
 		*vpp = NULL;
 		return (error);
