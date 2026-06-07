@@ -282,12 +282,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 			return (0);
 		}
 		node = vp->v_data;
-		P9FS_FID_LOCK(node);
-		vfid = p9fs_get_fid(node->p9fs_ses->clnt, node, curthread->td_ucred, VFID, -1, &error);
-		if (vfid == NULL)
-			p9fs_fid_add(node, fid, VFID);
-		P9FS_FID_UNLOCK(node);
-
+		vfid = p9fs_get_or_add_fid(node, fid, curthread->td_ucred, &error);
 		error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
 		if (error != 0) {
 			/* Remove stale vnode from hash list
@@ -322,7 +317,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 	/* Allocate a new vnode. */
 	if ((error = getnewvnode("p9fs", mp, &p9fs_vnops, &vp)) != 0) {
 		*vpp = NULL;
-		p9_client_clunk(fid);
 		P9_DEBUG(ERROR, "%s: getnewvnode failed: %d\n", __func__, error);
 		return (error);
 	}

@@ -175,18 +175,18 @@ p9fs_close_session(struct mount *mp)
  * as well as destroy/clunk them.
  */
 void
-p9fs_fid_remove_all(struct p9fs_node *np, int leave_fids)
+p9fs_fid_remove_all(struct p9fs_node *np, int remove_fids)
 {
 	struct p9_fid *fid, *tfid;
 
-	if (leave_fids & REMOVE_VFID) {
+	if (remove_fids & REMOVE_VFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vfid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
 		}
 	}
 
-	if (leave_fids & REMOVE_VOFID) {
+	if (remove_fids & REMOVE_VOFID) {
 		STAILQ_FOREACH_SAFE(fid, &np->vofid_list, fid_next, tfid) {
 			STAILQ_REMOVE(&np->vofid_list, fid, p9_fid, fid_next);
 			p9_client_clunk(fid);
@@ -296,8 +296,9 @@ p9fs_get_fid_from_uid(struct p9fs_node *np, uid_t uid, int fid_type, int mode)
 
 /*
  * Function returns the fid sturcture for a file corresponding to current user id.
- * First it searches in the fid list of the corresponding p9fs node.
- * If it needs to attach the root, it will do so.
+ * It searches in the fid list of the corresponding p9fs node.
+ * If the node is not the root and a fid is not found, it will return NULL.
+ * Otherwise, if it needs to attach the user, it will do so.
  */
 struct p9_fid *
 p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
@@ -340,4 +341,22 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	}
 
 	return (fid);
+}
+
+/* Add the given fid if we don't find a suitable one */
+struct p9_fid *
+p9fs_get_or_add_fid(struct p9fs_node *node, struct p9_fid *fid, struct ucred *cr,
+	int *error)
+{
+	struct p9_fid *vfid;
+
+	P9FS_FID_LOCK(node);
+	vfid = p9fs_get_fid(node->p9fs_ses->clnt, node, cr, VFID, -1, error);
+	if (*error != 0)
+		return (NULL);
+	if (vfid == NULL)
+		p9fs_fid_add(node, fid, VFID);
+	P9FS_FID_UNLOCK(node);
+
+	return (vfid);
 }

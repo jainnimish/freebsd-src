@@ -108,7 +108,7 @@ struct p9fs_node {
 	struct vnode *v_node;			/* vnode for this fs_node. */
 	struct p9fs_inode inode;		/* in memory representation of ondisk information*/
 	struct p9fs_session *p9fs_ses;	/*  Session_ptr for this node */
-	struct mtx fid_mtx;
+	struct mtx fid_mtx;			/* mutex for fid during vop_lookup */
 	struct p9_fid *gfid; 			/* generic fid */
 	u_int flags;
 };
@@ -202,12 +202,14 @@ int p9fs_node_cmp(struct vnode *vp, void *arg);
 void p9fs_destroy_node(struct p9fs_node **npp);
 void p9fs_dispose_node(struct p9fs_node **npp);
 void p9fs_cleanup(struct p9fs_node *vp);
-void p9fs_fid_remove_all(struct p9fs_node *np, int leave_ofids);
+void p9fs_fid_remove_all(struct p9fs_node *np, int remove_fids);
 void p9fs_fid_remove(struct p9fs_node *np, struct p9_fid *vfid,
     int fid_type);
 void p9fs_fid_add(struct p9fs_node *np, struct p9_fid *fid,
     int fid_type);
 struct p9_fid *p9fs_get_fid(struct p9_client *clnt,
     struct p9fs_node *np, struct ucred *cred, int fid_type, int mode, int *error);
+struct p9_fid *p9fs_get_or_add_fid(struct p9fs_node *node,
+    struct p9_fid *fid, struct ucred *cr, int *error);
 
 #endif /* FS_P9FS_P9FS_H */
