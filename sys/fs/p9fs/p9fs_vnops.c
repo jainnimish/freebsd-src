@@ -111,6 +111,7 @@ p9fs_cleanup(struct p9fs_node *np)
 	if ((np->flags & P9FS_NODE_DELETED) == 0)
 		vfs_hash_remove(vp);
 
+	/* Taken from D55755 */
 	P9FS_LOCK(vses);
 	if ((np->flags & P9FS_NODE_IN_SESSION) != 0) {
 		P9FS_NODE_CLRF(np, P9FS_NODE_IN_SESSION);
@@ -191,8 +192,8 @@ p9fs_lookup_alloc(struct mount *mp, void *arg, int lkflags, struct vnode **vpp)
 {
 	struct p9fs_lookup_alloc_arg *p9aa = arg;
 
-	return (p9fs_vget_common(mp, NULL, p9aa->cnp->cn_lkflags,
-		p9aa->dnp, p9aa->newfid, vpp, p9aa->cnp->cn_nameptr));
+	return (p9fs_vget_common(mp, NULL, p9aa->cnp->cn_lkflags, p9aa->dnp,
+		p9aa->newfid, vpp, p9aa->cnp->cn_nameptr));
 }
 
 /*
@@ -325,6 +326,7 @@ p9fs_lookup(struct vop_lookup_args *ap)
 		/* Check if the entry in cache is stale or not */
 		np = P9FS_VTON(vp);
 		if (p9fs_node_cmp(vp, &newfid->qid) == 0) {
+			error = 0;
 			vfid = p9fs_get_or_add_fid(np, newfid, cnp->cn_cred, &error);
 			if (error == 0) {
 				if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) != 0) {
@@ -861,7 +863,7 @@ p9fs_reload_stats_dotl(struct vnode *vp, struct ucred *cred)
 	vfid = p9fs_get_fid(vses->clnt, node, cred, VOFID, P9PROTO_OREAD, &error);
 	if (vfid == NULL) {
 		vfid = p9fs_get_fid(vses->clnt, node, cred, VFID, -1, &error);
-		if (error || vfid == NULL)
+		if (error)
 			return (error);
 	}
 
@@ -1313,19 +1315,11 @@ p9fs_get_open_fid(struct vnode *vp, int mode, struct ucred *cr, struct open_fid_
 
 	np = P9FS_VTON(vp);
 	vses = np->p9fs_ses;
-
 	vofid = p9fs_get_fid(vses->clnt, np, cr, VOFID, mode, &error);
 	if (vofid == NULL) {
 		vfid = p9fs_get_fid(vses->clnt, np, cr, VFID, -1, &error);
 		if (error)
 			return (error);
-
-		/*
-		 * This thread likely did not go through VOP_LOOKUP.
-		 * Fallback to the generic fid.
-		 */
-		if (vfid == NULL)
-			vfid = np->gfid;
 
 		vofid = p9_client_walk(vfid, 0, NULL, 1, &error);
 		if (error)

@@ -295,13 +295,13 @@ p9fs_get_fid_from_uid(struct p9fs_node *np, uid_t uid, int fid_type, int mode)
 }
 
 /*
- * Function returns the fid sturcture for a file corresponding to current user id.
+ * Function returns the fid structure for a file corresponding to current user id.
  * It searches in the fid list of the corresponding p9fs node.
  * If the node is not the root and a fid is not found, it will return NULL.
  * Otherwise, if it needs to attach the user, it will do so.
  */
-struct p9_fid *
-p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
+static struct p9_fid *
+p9fs_fetch_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
     int fid_type, int mode, int *error)
 {
 	uid_t uid;
@@ -343,6 +343,21 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	return (fid);
 }
 
+struct p9_fid *
+p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
+    int fid_type, int mode, int *error)
+{
+	struct p9_fid *fid;
+
+	fid = p9fs_fetch_fid(clnt, np, cred, fid_type, mode, error);
+	if (*error != 0)
+		return (NULL);
+	if (fid == NULL && fid_type == VFID)
+		return (np->gfid);
+
+	return (fid);
+}
+
 /* Add the given fid if we don't find a suitable one */
 struct p9_fid *
 p9fs_get_or_add_fid(struct p9fs_node *node, struct p9_fid *fid, struct ucred *cr,
@@ -351,9 +366,11 @@ p9fs_get_or_add_fid(struct p9fs_node *node, struct p9_fid *fid, struct ucred *cr
 	struct p9_fid *vfid;
 
 	P9FS_FID_LOCK(node);
-	vfid = p9fs_get_fid(node->p9fs_ses->clnt, node, cr, VFID, -1, error);
-	if (*error != 0)
+	vfid = p9fs_fetch_fid(node->p9fs_ses->clnt, node, cr, VFID, -1, error);
+	if (*error != 0) {
+		P9FS_FID_UNLOCK(node);
 		return (NULL);
+	}
 	if (vfid == NULL)
 		p9fs_fid_add(node, fid, VFID);
 	P9FS_FID_UNLOCK(node);

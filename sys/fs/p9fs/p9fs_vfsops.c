@@ -285,9 +285,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		vfid = p9fs_get_or_add_fid(node, fid, curthread->td_ucred, &error);
 		error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
 		if (error != 0) {
-			/* Remove stale vnode from hash list
-			 * Don't clunk fid because we use it below
-			 */
+			/* Remove stale vnode from hash list */
 			if (vfid == NULL)
 				p9fs_fid_remove(node, fid, VFID);
 			vfs_hash_remove(vp);
@@ -405,6 +403,7 @@ out:
 	if (np->gfid != NULL)
 		p9_client_clunk(np->gfid);
 
+	/* Taken from D55755 */
 	if (np != NULL && !IS_ROOT(np)) {
 		p9fs_destroy_node(&np);
 	}
@@ -459,8 +458,8 @@ p9_mount(struct mount *mp)
 	}
 
 	/* Attach the generic user */
-	p9fs_root->gfid = p9_client_attach(vses->clnt, NULL, "generic", 0,
-	   vses->aname, &error);
+	p9fs_root->gfid = p9_client_attach(vses->clnt, NULL, "generic",
+	    0, vses->aname, &error);
 	if (error)
 		goto out;
 
