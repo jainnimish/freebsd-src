@@ -195,7 +195,6 @@ p9fs_fid_remove_all(struct p9fs_node *np, int remove_fids)
 }
 
 
-
 /* Remove a fid from its corresponding fid list */
 void
 p9fs_fid_remove(struct p9fs_node *np, struct p9_fid *fid, int fid_type)
