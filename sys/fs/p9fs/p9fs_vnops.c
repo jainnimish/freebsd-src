@@ -123,6 +123,13 @@ p9fs_cleanup(struct p9fs_node *np)
 		/* Destroy the vm object and flush associated pages. */
 		vnode_destroy_vobject(vp);
 	} else {
+		/*
+		 * The node was allocated in p9fs_vget_common but vfs_hash_insert()
+		 * found a duplicate and called vgone() on us before we could
+		 * add ourselves.  We must still release FIDs and dispose the
+		 * node to ensure vp->v_data is cleared before freevnode()
+		 * checks it.
+		 */
 		P9FS_UNLOCK(vses);
 	}
 
@@ -323,18 +330,19 @@ p9fs_lookup(struct vop_lookup_args *ap)
 
 	if (error == -1) {
 		vp = *vpp;
-		/* Check if the entry in cache is stale or not */
 		np = P9FS_VTON(vp);
+		/* Check if the entry in cache is stale or not */
 		if (p9fs_node_cmp(vp, &newfid->qid) == 0) {
 			error = 0;
 			vfid = p9fs_get_or_add_fid(np, newfid, cnp->cn_cred, &error);
 			if (error == 0) {
-				if ((error = VOP_GETATTR(vp, &vattr, cnp->cn_cred)) != 0) {
+				if (VOP_GETATTR(vp, &vattr, cnp->cn_cred) != 0) {
 					if (vfid == NULL)
 						p9fs_fid_remove(np, newfid, VFID);
 				} else {
 					if (vfid != NULL)
 						p9_client_clunk(newfid);
+					cnp->cn_nameptr[cnp->cn_namelen] = tmpchr;
 					return (0);
 				}
 			}
@@ -1330,11 +1338,18 @@ p9fs_get_open_fid(struct vnode *vp, int mode, struct ucred *cr, struct open_fid_
 			p9_client_clunk(vofid);
 			return (error);
 		}
-
 		statep->opened = TRUE;
 	}
 	statep->vofid = vofid;
 	return (0);
+}
+
+static void
+p9fs_release_open_fid(struct open_fid_state *statep)
+{
+	if (statep->opened) {
+		p9_client_clunk(statep->vofid);
+	}
 }
 
 /*
@@ -1416,8 +1431,7 @@ p9fs_read(struct vop_read_args *ap)
 	uio->uio_offset = offset;
 out:
 	uma_zfree(p9fs_io_buffer_zone, io_buffer);
-	if (ostate.opened)
-		p9_client_clunk(ostate.vofid);
+	p9fs_release_open_fid(&ostate);
 
 	return (error);
 }
@@ -1524,8 +1538,7 @@ p9fs_write(struct vop_write_args *ap)
 out:
 	if (io_buffer)
 		uma_zfree(p9fs_io_buffer_zone, io_buffer);
-	if (ostate.opened)
-		p9_client_clunk(ostate.vofid);
+	p9fs_release_open_fid(&ostate);
 
 	return (error);
 }
@@ -2074,8 +2087,7 @@ p9fs_strategy(struct vop_strategy_args *ap)
 	}
 
 	p9fs_doio(vp, bp, ostate.vofid, cr);
-	if (ostate.opened)
-		p9_client_clunk(ostate.vofid);
+	p9fs_release_open_fid(&ostate);
 
 	return (0);
 }

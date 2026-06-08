@@ -92,11 +92,16 @@ struct p9fs_inode {
 #define P9FS_FID_LOCK(_sc) mtx_lock(P9FS_FID_MTX(_sc))
 #define P9FS_FID_UNLOCK(_sc) mtx_unlock(P9FS_FID_MTX(_sc))
 #define P9FS_FID_LOCK_INIT(_sc) mtx_init(P9FS_FID_MTX(_sc), \
-    "get_fid lock", NULL, MTX_DEF)
+    "p9fs_lookup fid lock", NULL, MTX_DEF)
 #define P9FS_FID_LOCK_DESTROY(_sc) mtx_destroy(P9FS_FID_MTX(_sc))
 
 #define VFID	0x01
 #define VOFID	0x02
+
+/* FID removal flags */
+#define REMOVE_VFID  	1
+#define REMOVE_VOFID 	2
+#define REMOVE_ALL   	3
 
 /* A Plan9 node. */
 struct p9fs_node {
@@ -196,7 +201,7 @@ void p9fs_prepare_to_close(struct mount *mp);
 void p9fs_complete_close(struct mount *mp);
 int p9fs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp);
 int p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9fs_node *dnp, struct p9_fid *fid, struct vnode **vpp,
+    struct p9fs_node *parent, struct p9_fid *fid, struct vnode **vpp,
     char *name);
 int p9fs_node_cmp(struct vnode *vp, void *arg);
 void p9fs_destroy_node(struct p9fs_node **npp);

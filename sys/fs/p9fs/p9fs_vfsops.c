@@ -251,7 +251,7 @@ p9fs_destroy_node(struct p9fs_node **npp)
  */
 int
 p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
-    struct p9fs_node *dnp, struct p9_fid *fid, struct vnode **vpp,
+    struct p9fs_node *parent, struct p9_fid *fid, struct vnode **vpp,
     char *name)
 {
 	struct p9fs_mount *vmp;
@@ -340,7 +340,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		strlcpy(inode->i_name, name, strlen(name)+1);
 
 		/* Create the generic fid for this node */
-		np->gfid = p9_client_walk(dnp->gfid, 1, &name, 1, &error);
+		np->gfid = p9_client_walk(parent->gfid, 1, &name, 1, &error);
 	} else {
 		vp->v_type = VDIR; /* root vp is a directory */
 		vp->v_vflag |= VV_ROOT;
@@ -458,8 +458,8 @@ p9_mount(struct mount *mp)
 	}
 
 	/* Attach the generic user */
-	p9fs_root->gfid = p9_client_attach(vses->clnt, NULL, "generic",
-	    0, vses->aname, &error);
+	p9fs_root->gfid = p9_client_attach(vses->clnt, NULL, "generic", 0,
+	    vses->aname, &error);
 	if (error)
 		goto out;
 

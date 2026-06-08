@@ -320,9 +320,10 @@ p9fs_fetch_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 
 	/*
 	 * Search for the fid in corresponding fid list.
-	 * We should return NULL for anything except root
-	 * if it is not present in the list because it should
-	 * have been created during VOP_LOOKUP or VOP_OPEN
+	 * We should return NULL for VOFIDs because they should
+	 * have been created during VOP_OPEN. For VFIDs,
+	 * let p9fs_get_fid() handle the case we don't find one,
+	 * except if this node is the root node.
 	 */
 	fid = p9fs_get_fid_from_uid(np, uid, fid_type, mode);
 	if (fid != NULL || !IS_ROOT(np) || fid_type == VOFID)
@@ -361,7 +362,7 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 /* Add the given fid if we don't find a suitable one */
 struct p9_fid *
 p9fs_get_or_add_fid(struct p9fs_node *node, struct p9_fid *fid, struct ucred *cr,
-	int *error)
+    int *error)
 {
 	struct p9_fid *vfid;
 
