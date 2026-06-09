@@ -74,12 +74,14 @@ struct p9fs_inode {
 
 };
 
-#define P9FS_VFID_MTX(_sc) (&(_sc)->vfid_mtx)
-#define P9FS_VFID_LOCK(_sc) mtx_lock(P9FS_VFID_MTX(_sc))
-#define P9FS_VFID_UNLOCK(_sc) mtx_unlock(P9FS_VFID_MTX(_sc))
-#define P9FS_VFID_LOCK_INIT(_sc) mtx_init(P9FS_VFID_MTX(_sc), \
-    "VFID List lock", NULL, MTX_DEF)
-#define P9FS_VFID_LOCK_DESTROY(_sc) mtx_destroy(P9FS_VFID_MTX(_sc))
+#define P9FS_VFID_SX(_sc) (&(_sc)->vfid_sx)
+#define P9FS_VFID_SLOCK(_sc) sx_slock(P9FS_VFID_SX(_sc))
+#define P9FS_VFID_SUNLOCK(_sc) sx_sunlock(P9FS_VFID_SX(_sc))
+#define P9FS_VFID_XLOCK(_sc) sx_xlock(P9FS_VFID_SX(_sc))
+#define P9FS_VFID_XUNLOCK(_sc) sx_xunlock(P9FS_VFID_SX(_sc))
+#define P9FS_VFID_LOCK_INIT(_sc) sx_init(P9FS_VFID_SX(_sc), \
+    "VFID List lock")
+#define P9FS_VFID_LOCK_DESTROY(_sc) sx_destroy(P9FS_VFID_SX(_sc))
 
 #define P9FS_VOFID_MTX(_sc) (&(_sc)->vofid_mtx)
 #define P9FS_VOFID_LOCK(_sc) mtx_lock(P9FS_VOFID_MTX(_sc))
@@ -106,7 +108,7 @@ struct p9fs_inode {
 /* A Plan9 node. */
 struct p9fs_node {
 	STAILQ_HEAD( ,p9_fid) vfid_list;	/* vfid related to uid */
-	struct mtx vfid_mtx;			/* mutex for vfid list */
+	struct sx vfid_sx;			/* shared lock for vfid list */
 	STAILQ_HEAD( ,p9_fid) vofid_list;	/* vofid related to uid */
 	struct mtx vofid_mtx;			/* mutex for vofid list */
 	struct p9fs_qid vqid;			/* the server qid, will be from the host */

@@ -202,9 +202,9 @@ p9fs_fid_remove(struct p9fs_node *np, struct p9_fid *fid, int fid_type)
 
 	switch (fid_type) {
 	case VFID:
-		P9FS_VFID_LOCK(np);
+		P9FS_VFID_XLOCK(np);
 		STAILQ_REMOVE(&np->vfid_list, fid, p9_fid, fid_next);
-		P9FS_VFID_UNLOCK(np);
+		P9FS_VFID_XUNLOCK(np);
 		break;
 	case VOFID:
 		P9FS_VOFID_LOCK(np);
@@ -221,9 +221,9 @@ p9fs_fid_add(struct p9fs_node *np, struct p9_fid *fid, int fid_type)
 
 	switch (fid_type) {
 	case VFID:
-		P9FS_VFID_LOCK(np);
+		P9FS_VFID_XLOCK(np);
 		STAILQ_INSERT_TAIL(&np->vfid_list, fid, fid_next);
-		P9FS_VFID_UNLOCK(np);
+		P9FS_VFID_XUNLOCK(np);
 		break;
 	case VOFID:
 		P9FS_VOFID_LOCK(np);
@@ -269,14 +269,14 @@ p9fs_get_fid_from_uid(struct p9fs_node *np, uid_t uid, int fid_type, int mode)
 
 	switch (fid_type) {
 	case VFID:
-		P9FS_VFID_LOCK(np);
+		P9FS_VFID_SLOCK(np);
 		STAILQ_FOREACH(fid, &np->vfid_list, fid_next) {
 			if (fid->uid == uid) {
-				P9FS_VFID_UNLOCK(np);
+				P9FS_VFID_SUNLOCK(np);
 				return (fid);
 			}
 		}
-		P9FS_VFID_UNLOCK(np);
+		P9FS_VFID_SUNLOCK(np);
 		break;
 	case VOFID:
 		P9FS_VOFID_LOCK(np);

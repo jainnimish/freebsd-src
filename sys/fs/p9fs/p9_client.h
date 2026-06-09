@@ -34,6 +34,7 @@
 #include <sys/_unrhdr.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/sx.h>
 #include <sys/condvar.h>
 #include <sys/systm.h>
 #include <sys/mount.h>
