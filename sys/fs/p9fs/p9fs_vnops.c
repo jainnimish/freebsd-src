@@ -174,9 +174,6 @@ p9fs_inactive(struct vop_inactive_args *ap)
 	vp = ap->a_vp;
 	np = P9FS_VTON(vp);
 
-	if (np == NULL)
-		return (0);
-
 	P9_DEBUG(VOPS, "%s: vp:%p node:%p file:%s\n", __func__, vp, np, np->inode.i_name);
 
 	p9fs_fid_remove_all(np, REMOVE_VOFID);

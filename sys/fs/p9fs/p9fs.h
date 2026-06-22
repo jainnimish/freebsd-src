@@ -90,13 +90,6 @@ struct p9fs_inode {
     "VOFID List lock", NULL, MTX_DEF)
 #define P9FS_VOFID_LOCK_DESTROY(_sc) mtx_destroy(P9FS_VOFID_MTX(_sc))
 
-#define P9FS_FID_MTX(_sc) (&(_sc)->fid_mtx)
-#define P9FS_FID_LOCK(_sc) mtx_lock(P9FS_FID_MTX(_sc))
-#define P9FS_FID_UNLOCK(_sc) mtx_unlock(P9FS_FID_MTX(_sc))
-#define P9FS_FID_LOCK_INIT(_sc) mtx_init(P9FS_FID_MTX(_sc), \
-    "p9fs_lookup fid lock", NULL, MTX_DEF)
-#define P9FS_FID_LOCK_DESTROY(_sc) mtx_destroy(P9FS_FID_MTX(_sc))
-
 #define VFID	0x01
 #define VOFID	0x02
 
@@ -115,7 +108,6 @@ struct p9fs_node {
 	struct vnode *v_node;			/* vnode for this fs_node. */
 	struct p9fs_inode inode;		/* in memory representation of ondisk information*/
 	struct p9fs_session *p9fs_ses;	/*  Session_ptr for this node */
-	struct mtx fid_mtx;			/* mutex for fid during vop_lookup */
 	struct p9_fid *gfid; 			/* generic fid */
 	u_int flags;
 };

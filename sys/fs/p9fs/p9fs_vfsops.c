@@ -227,7 +227,6 @@ p9fs_destroy_node(struct p9fs_node **npp)
 	/* Destroy the FID LIST locks */
 	P9FS_VFID_LOCK_DESTROY(np);
 	P9FS_VOFID_LOCK_DESTROY(np);
-	P9FS_FID_LOCK_DESTROY(np);
 
 	/* Dispose all node knowledge.*/
 	p9fs_dispose_node(&np);
@@ -330,8 +329,6 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		/* Initialize the VOFID list */
 		P9FS_VOFID_LOCK_INIT(np);
 		STAILQ_INIT(&np->vofid_list);
-
-		P9FS_FID_LOCK_INIT(np);
 
 		np->p9fs_ses = vses; /* Map the current session */
 		inode = &np->inode;
@@ -468,7 +465,6 @@ p9_mount(struct mount *mp)
 	p9fs_fid_add(p9fs_root, fid, VFID);
 	P9FS_VOFID_LOCK_INIT(p9fs_root);
 	STAILQ_INIT(&p9fs_root->vofid_list);
-	P9FS_FID_LOCK_INIT(p9fs_root);
 	P9FS_NODE_SETF(p9fs_root, P9FS_NODE_ROOT);
 	p9fs_root->p9fs_ses = vses;
 	vfs_getnewfsid(mp);

@@ -293,6 +293,21 @@ p9fs_get_fid_from_uid(struct p9fs_node *np, uid_t uid, int fid_type, int mode)
 	return (NULL);
 }
 
+static uid_t
+p9fs_get_uid(struct p9fs_session *vses, struct ucred *cred)
+{
+	uid_t uid;
+
+	if (vses->flags & P9_ACCESS_ANY)
+		uid = vses->uid;
+	else if (cred)
+		uid = cred->cr_uid;
+	else
+		uid = 0;
+
+	return (uid);
+}
+
 /*
  * Function returns the fid structure for a file corresponding to current user id.
  * It searches in the fid list of the corresponding p9fs node.
@@ -309,13 +324,7 @@ p9fs_fetch_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	struct p9fs_session *vses;
 
 	vses = np->p9fs_ses;
-
-	if (vses->flags & P9_ACCESS_ANY)
-		uid = vses->uid;
-	else if (cred)
-		uid = cred->cr_uid;
-	else
-		uid = 0;
+	uid = p9fs_get_uid(vses, cred);
 
 	/*
 	 * Search for the fid in corresponding fid list.
@@ -358,22 +367,31 @@ p9fs_get_fid(struct p9_client *clnt, struct p9fs_node *np, struct ucred *cred,
 	return (fid);
 }
 
-/* Add the given fid if we don't find a suitable one */
+/*
+ * If there is no suitable fid for this uid,
+ * we add the given one and return NULL.
+ */
 struct p9_fid *
 p9fs_get_or_add_fid(struct p9fs_node *node, struct p9_fid *fid, struct ucred *cr,
     int *error)
 {
 	struct p9_fid *vfid;
+	uid_t uid;
 
-	P9FS_FID_LOCK(node);
-	vfid = p9fs_fetch_fid(node->p9fs_ses->clnt, node, cr, VFID, -1, error);
-	if (*error != 0) {
-		P9FS_FID_UNLOCK(node);
-		return (NULL);
+	if (IS_ROOT(node))
+		return (p9fs_fetch_fid(node->p9fs_ses->clnt, node, cr, VFID, -1, error));
+
+	uid = p9fs_get_uid(node->p9fs_ses, cr);
+
+	P9FS_VFID_XLOCK(node);
+	STAILQ_FOREACH(vfid, &node->vfid_list, fid_next) {
+		if (vfid->uid == uid) {
+			P9FS_VFID_XUNLOCK(node);
+			return (vfid);
+		}
 	}
-	if (vfid == NULL)
-		p9fs_fid_add(node, fid, VFID);
-	P9FS_FID_UNLOCK(node);
+	STAILQ_INSERT_TAIL(&node->vfid_list, fid, fid_next);
+	P9FS_VFID_XUNLOCK(node);
 
-	return (vfid);
+	return (NULL);
 }
