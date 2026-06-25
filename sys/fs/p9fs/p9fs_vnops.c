@@ -709,10 +709,6 @@ p9fs_open(struct vop_open_args *ap)
 	if (vp->v_type != VREG && vp->v_type != VDIR && vp->v_type != VLNK)
 		return (EOPNOTSUPP);
 
-	error = p9fs_reload_stats_dotl(vp, ap->a_cred);
-	if (error != 0)
-		return (error);
-
 	ASSERT_VOP_LOCKED(vp, __func__);
 	/*
 	 * Invalidate the pages of the vm_object cache if the file is modified
