@@ -183,7 +183,7 @@ bhyve_optparse(int argc, char **argv)
 			set_config_value("uuid", optarg);
 			break;
 		case 'W':
-			set_config_bool("virtio_msix", false);
+			set_config_bool("virtio.msix", false);
 			break;
 		case 'h':
 			bhyve_usage(0);

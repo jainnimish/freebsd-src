@@ -250,7 +250,7 @@ bhyve_optparse(int argc, char **argv)
 			set_config_bool("x86.strictmsr", false);
 			break;
 		case 'W':
-			set_config_bool("virtio_msix", false);
+			set_config_bool("virtio.msix", false);
 			break;
 		case 'x':
 			set_config_bool("x86.x2apic", true);
