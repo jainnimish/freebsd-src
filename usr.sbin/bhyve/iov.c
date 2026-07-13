@@ -130,16 +130,42 @@ iov_to_buf(const struct iovec *iov, size_t niov, void **buf)
 }
 
 size_t
-buf_to_iov(const void *buf, size_t buflen, const struct iovec *iov, size_t niov)
+buf_to_iov(const void *buf, size_t buflen,
+	   const struct iovec *iov, size_t niov, size_t i)
 {
 	size_t off = 0, len;
-	size_t  i;
 
-	for (i = 0; i < niov && off < buflen; i++) {
+	for (; i < niov && off < buflen; i++) {
 		len = MIN(iov[i].iov_len, buflen - off);
 		memcpy(iov[i].iov_base, (const uint8_t *)buf + off, len);
 		off += len;
 	}
 
 	return (off);
+}
+
+/* Copies out a buffer from contiguous iovs */
+int
+iov_extract(void *buf, size_t buflen, struct iov_iter *iter)
+{
+	size_t pos = 0, len;
+
+	for (;;) {
+		len = MIN(buflen - pos, iter->iov[iter->ind].iov_len - iter->off);
+		memcpy((char *)buf + pos,
+		   (char *)iter->iov[iter->ind].iov_base + iter->off, len);
+		pos += len;
+
+		if ((iter->off += len) == iter->iov[iter->ind].iov_len) {
+			iter->ind++;
+			iter->off = 0;
+			if (--iter->hv == 0)
+				break;
+		}
+
+		if (pos == buflen)
+			return (0);
+	}
+
+	return ((pos == buflen) ? 0 : 1);
 }

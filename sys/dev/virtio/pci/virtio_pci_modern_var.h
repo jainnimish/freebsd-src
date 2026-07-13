@@ -49,6 +49,19 @@
 #define VIRTIO_PCI_CAP_DEVICE_CFG	4
 /* PCI configuration access */
 #define VIRTIO_PCI_CAP_PCI_CFG		5
+#define	VIRTIO_PCI_CAP_MAX		VIRTIO_PCI_CAP_PCI_CFG
+
+/*
+ * Alignment requirements for the BAR regions pointed to by each capability.
+ * Note that some have multiple alignment requirements based on negotiated
+ * features and for those we choose the larger value. There are no alignment
+ * requirements for VIRTIO_PCI_CAP_PCI_CFG as it does not point to a fixed BAR
+ * area.
+ */
+#define VIRTIO_PCI_CAP_COMMON_CFG_ALIGN		4
+#define VIRTIO_PCI_CAP_NOTIFY_CFG_ALIGN		4
+#define VIRTIO_PCI_CAP_ISR_CFG_ALIGN		1
+#define VIRTIO_PCI_CAP_DEVICE_CFG_ALIGN		4
 
 /* This is the PCI capability header: */
 struct virtio_pci_cap {
@@ -57,7 +70,8 @@ struct virtio_pci_cap {
 	uint8_t cap_len;		/* Generic PCI field: capability length */
 	uint8_t cfg_type;		/* Identifies the structure. */
 	uint8_t bar;			/* Where to find it. */
-	uint8_t padding[3];		/* Pad to full dword. */
+	uint8_t id;			/* Numeric identifier. */
+	uint8_t padding[2];		/* Pad to full dword. */
 	uint32_t offset;		/* Offset within bar. */
 	uint32_t length;		/* Length of the structure, in bytes. */
 };
@@ -105,6 +119,7 @@ struct virtio_pci_cfg_cap {
 #define VIRTIO_PCI_CAP_LEN		2
 #define VIRTIO_PCI_CAP_CFG_TYPE		3
 #define VIRTIO_PCI_CAP_BAR		4
+#define VIRTIO_PCI_CAP_ID		5
 #define VIRTIO_PCI_CAP_OFFSET		8
 #define VIRTIO_PCI_CAP_LENGTH		12
 

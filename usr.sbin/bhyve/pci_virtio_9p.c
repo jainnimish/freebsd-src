@@ -1,6 +1,7 @@
 /*-
  * Copyright (c) 2015 iXsystems Inc.
  * Copyright (c) 2017-2018 Jakub Klama <jceel@FreeBSD.org>
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,6 +47,7 @@
 
 #include <lib9p.h>
 #include <backend/fs.h>
+#include <dev/virtio/p9fs/virtio_p9fs.h>
 
 #include "bhyverun.h"
 #include "config.h"
@@ -109,7 +111,8 @@ static struct virtio_consts vt9p_vi_consts = {
 	.vc_qnotify =	pci_vt9p_notify,
 	.vc_cfgread =	pci_vt9p_cfgread,
 	.vc_apply_features = pci_vt9p_neg_features,
-	.vc_hv_caps =	(1 << 0),
+	.vc_hv_caps_legacy = VIRTIO_9PNET_F_MOUNT_TAG,
+	.vc_hv_caps_modern = VIRTIO_9PNET_F_MOUNT_TAG,
 };
 
 static void
@@ -325,15 +328,12 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_vq.vq_qsize = VT9P_RINGSZ;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_9P);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_9P);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	vi_pci_init(pi, VIRTIO_MODE_TRANSITIONAL, VIRTIO_DEV_9P, VIRTIO_ID_9P,
+	   PCIC_STORAGE);
 
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
+	if (vi_intr_init(&sc->vsc_vs, fbsdrun_virtio_msix()) ||
+	   vi_pcibar_setup(&sc->vsc_vs))
 		return (1);
-	vi_set_io_bar(&sc->vsc_vs, 0);
 
 	return (0);
 }
@@ -342,6 +342,8 @@ static const struct pci_devemu pci_de_v9p = {
 	.pe_emu =	"virtio-9p",
 	.pe_legacy_config = pci_vt9p_legacy_config,
 	.pe_init =	pci_vt9p_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };

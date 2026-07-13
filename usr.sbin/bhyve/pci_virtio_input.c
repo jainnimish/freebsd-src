@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Beckhoff Automation GmbH & Co. KG
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -162,7 +163,8 @@ static struct virtio_consts vtinput_vi_consts = {
 	.vc_reset =	pci_vtinput_reset,
 	.vc_cfgread =	pci_vtinput_cfgread,
 	.vc_cfgwrite =	pci_vtinput_cfgwrite,
-	.vc_hv_caps =	0,
+	.vc_hv_caps_legacy = 0,
+	.vc_hv_caps_modern = 0,
 };
 
 static void
@@ -459,6 +461,7 @@ pci_vtinput_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 
 	/* select/subsel changed, query new config on next cfgread */
 	sc->vsc_config_valid = 0;
+	vq_devcfg_changed(&sc->vsc_vs);
 
 	return (0);
 }
@@ -727,19 +730,17 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_queues[VTINPUT_STATUSQ].vq_notify = pci_vtinput_notify_statusq;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_INPUT);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_INPUTDEV);
+	vi_pci_init(pi, VIRTIO_MODE_TRANSITIONAL, VIRTIO_DEV_INPUT,
+	   VIRTIO_ID_INPUT, PCIC_INPUTDEV);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_INPUTDEV_OTHER);
 	pci_set_cfgdata8(pi, PCIR_REVID, VIRTIO_REV_INPUT);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_SUBDEV_INPUT);
 	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_SUBVEN_INPUT);
 
 	/* add MSI-X table BAR */
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
+	if (vi_intr_init(&sc->vsc_vs, fbsdrun_virtio_msix()) ||
+	   vi_pcibar_setup(&sc->vsc_vs))
 		goto failed;
-	/* add virtio register */
-	vi_set_io_bar(&sc->vsc_vs, 0);
 
 	return (0);
 
@@ -767,6 +768,8 @@ failed:
 static const struct pci_devemu pci_de_vinput = {
 	.pe_emu = "virtio-input",
 	.pe_init = pci_vtinput_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_legacy_config = pci_vtinput_legacy_config,
 	.pe_barwrite = vi_pci_write,
 	.pe_barread = vi_pci_read,

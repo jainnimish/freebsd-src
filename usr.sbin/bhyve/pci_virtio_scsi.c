@@ -4,6 +4,7 @@
  * Copyright (c) 2016 Jakub Klama <jceel@FreeBSD.org>.
  * Copyright (c) 2018 Marcelo Araujo <araujo@FreeBSD.org>.
  * Copyright (c) 2026 Hans Rosenfeld
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -128,7 +129,8 @@ static struct virtio_consts vtscsi_vi_consts = {
 	.vc_cfgread =	pci_vtscsi_cfgread,
 	.vc_cfgwrite =	pci_vtscsi_cfgwrite,
 	.vc_apply_features = pci_vtscsi_neg_features,
-	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC,
+	.vc_hv_caps_legacy = VIRTIO_RING_F_INDIRECT_DESC,
+	.vc_hv_caps_modern = VIRTIO_RING_F_INDIRECT_DESC,
 };
 
 static const struct pci_vtscsi_config vtscsi_config = {
@@ -878,7 +880,7 @@ pci_vtscsi_return_request(struct pci_vtscsi_queue *q,
 	    req->vsr_cmd_wr->response);
 
 	iolen += buf_to_iov(cmd_wr, VTSCSI_OUT_HEADER_LEN(q->vsq_sc),
-	    req->vsr_iov_out, req->vsr_niov_out);
+	    req->vsr_iov_out, req->vsr_niov_out, 0);
 
 	sc->vss_backend->vsb_req_clear(backend);
 
@@ -927,7 +929,7 @@ pci_vtscsi_controlq_notify(void *vsc, struct vqueue_info *vq)
 
 		bufsize = iov_to_buf(iov, n, &buf);
 		pci_vtscsi_control_handle(sc, buf, bufsize);
-		buf_to_iov((uint8_t *)buf, bufsize, iov, n);
+		buf_to_iov((uint8_t *)buf, bufsize, iov, n, 0);
 
 		/*
 		 * Release this chain and handle more
@@ -1443,17 +1445,12 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_SCSI);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_SCSI);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	vi_pci_init(pi, VIRTIO_MODE_LEGACY, VIRTIO_DEV_SCSI,
+	   VIRTIO_ID_SCSI, PCIC_STORAGE);
 
-	err = vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix());
-	if (err != 0)
+	if ((err = vi_intr_init(&sc->vss_vs, fbsdrun_virtio_msix())) ||
+	   (err = vi_pcibar_setup(&sc->vss_vs)))
 		goto fail;
-
-	vi_set_io_bar(&sc->vss_vs, 0);
 
 	return (0);
 
@@ -1489,6 +1486,8 @@ fail:
 static const struct pci_devemu pci_de_vscsi = {
 	.pe_emu =	"virtio-scsi",
 	.pe_init =	pci_vtscsi_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_legacy_config = pci_vtscsi_legacy_config,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read

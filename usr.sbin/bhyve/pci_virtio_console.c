@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016 iXsystems Inc.
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * This software was developed by Jakub Klama <jceel@FreeBSD.org>
@@ -173,7 +174,8 @@ static struct virtio_consts vtcon_vi_consts = {
 	.vc_cfgread =	pci_vtcon_cfgread,
 	.vc_cfgwrite =	pci_vtcon_cfgwrite,
 	.vc_apply_features = pci_vtcon_neg_features,
-	.vc_hv_caps =	VTCON_S_HOSTCAPS,
+	.vc_hv_caps_legacy = VTCON_S_HOSTCAPS,
+	.vc_hv_caps_modern = VTCON_S_HOSTCAPS,
 };
 
 static void
@@ -713,15 +715,12 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_CONSOLE);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_SIMPLECOMM);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_CONSOLE);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	vi_pci_init(pi, VIRTIO_MODE_TRANSITIONAL, VIRTIO_DEV_CONSOLE,
+	   VIRTIO_ID_CONSOLE, PCIC_SIMPLECOMM);
 
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
+	if (vi_intr_init(&sc->vsc_vs, fbsdrun_virtio_msix()) ||
+	   vi_pcibar_setup(&sc->vsc_vs))
 		return (1);
-	vi_set_io_bar(&sc->vsc_vs, 0);
 
 	/* create control port */
 	sc->vsc_control_port.vsp_sc = sc;
@@ -757,6 +756,8 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 static const struct pci_devemu pci_de_vcon = {
 	.pe_emu =	"virtio-console",
 	.pe_init =	pci_vtcon_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 	.pe_legacy_config = pci_vtcon_legacy_config,

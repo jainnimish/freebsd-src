@@ -182,6 +182,10 @@ bhyve_optparse(int argc, char **argv)
 			bhyve_usage(1);
 		}
 	}
+
+	/* Handle backwards compatibility aliases in config options. */
+	bhyve_cfg_warn("virtio_msix", "virtio.msix", "virtio.msix");
+
 }
 
 void

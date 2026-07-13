@@ -2,6 +2,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013  Chris Torek <torek @ torek net>
+ * Copyright (c) 2021  The FreeBSD Foundation
+ *
+ * Portions of this software were developed by Ka Ho Ng
+ * under sponsorship of the FreeBSD Foundation.
+ *
+ * Copyright (c) 2026  Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,23 +35,30 @@
 #ifndef	_BHYVE_VIRTIO_H_
 #define	_BHYVE_VIRTIO_H_
 
+#include <sys/cdefs.h>
 #include <machine/atomic.h>
 
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtio_ring.h>
 #include <dev/virtio/pci/virtio_pci_var.h>
+#include <dev/virtio/pci/virtio_pci_legacy_var.h>
+#include <dev/virtio/pci/virtio_pci_modern_var.h>
 
 /*
- * These are derived from several virtio specifications.
+ * Legacy virtio is derived from several virtio specifications.
  *
  * Some useful links:
  *    https://github.com/rustyrussell/virtio-spec
  *    http://people.redhat.com/pbonzini/virtio-spec.pdf
+ *
+ * Virtio modern support is authored with the reference below:
+ *    https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.pdf
  */
 
 /*
- * A virtual device has zero or more "virtual queues" (virtqueue).
- * Each virtqueue uses at least two 4096-byte pages, laid out thus:
+ * In legacy virtio, virtual device has zero
+ * or more "virtual queues" (virtqueue). Each virtqueue
+ * uses at least two 4096-byte pages, laid out thus:
  *
  *      +-----------------------------------------------+
  *      |    "desc":  <N> descriptors, 16 bytes each    |
@@ -125,9 +138,10 @@
  * (These are provided only for interrupt optimization and need
  * not be implemented.)
  */
-#define VRING_ALIGN	4096
+#define LEGACY_VRING_ALIGN	4096
 
 /*
+ * Legacy:
  * The address of any given virtual queue is determined by a single
  * Page Frame Number register.  The guest writes the PFN into the
  * PCI config space.  However, a device that has two or more
@@ -157,7 +171,7 @@
 /*
  * PFN register shift amount
  */
-#define	VRING_PFN		12
+#define	LEGACY_VRING_PFN		12
 
 /*
  * PCI vendor/device IDs
@@ -185,13 +199,6 @@
  * PCI subdevice IDs
  */
 #define VIRTIO_SUBDEV_INPUT	0x1100
-
-/* From section 2.3, "Virtqueue Configuration", of the virtio specification */
-static inline int
-vring_size_aligned(u_int qsz)
-{
-	return (roundup2(vring_size(qsz, VRING_ALIGN), VRING_ALIGN));
-}
 
 struct pci_devinst;
 struct vqueue_info;
@@ -224,24 +231,52 @@ struct vm_snapshot_meta;
  * However, the driver must verify the read or write size and offset
  * and that no one is writing a readonly register.)
  *
- * The BROKED flag ("this thing done gone and broked") is for future
- * use.
  */
-#define	VIRTIO_USE_MSIX		0x01
-#define	VIRTIO_EVENT_IDX	0x02	/* use the event-index values */
-#define	VIRTIO_BROKED		0x08	/* ??? */
+
+typedef enum virtio_flags {
+	VIRTIO_USE_MSIX		= (1 << 0),
+	VIRTIO_EVENT_IDX	= (1 << 1), /* Event-index values */
+	VIRTIO_DEVCFG_CHG	= (1 << 2), /* Device configuration changed */
+	VIRTIO_BROKEN		= (1 << 3),
+} virtio_flags_t;
+
+typedef enum virtio_mode {
+	VIRTIO_MODE_UNSET = 0,
+	VIRTIO_MODE_LEGACY,
+	VIRTIO_MODE_TRANSITIONAL,
+	VIRTIO_MODE_MODERN,
+} virtio_mode_t;
+
+/*
+ * This describes a Virtio PCI capability in config space.
+ */
+typedef struct virtio_pci_capcfg {
+	uint8_t		c_captype;
+	uint32_t	c_capoff; /* Offset of the capability*/
+	uint32_t	c_caplen; /* Length of the capability*/
+	uint32_t	c_barlen; /* Containing BAR */
+	uint32_t	c_baroff; /* Containing offset of data*/
+	uint8_t		c_baridx; /* Containing length of data*/
+} virtio_pci_capcfg_t;
 
 struct virtio_softc {
 	struct virtio_consts *vs_vc;	/* constants (see below) */
-	int	vs_flags;		/* VIRTIO_* flags from above */
+	virtio_flags_t	vs_flags;	/* VIRTIO_* flags from above */
+	virtio_mode_t vs_mode;		/* VIRTIO_MODE_* values from above */
 	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
 	struct pci_devinst *vs_pi;	/* PCI device instance */
-	uint32_t vs_negotiated_caps;	/* negotiated capabilities */
+	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
 	int	vs_curq;		/* current queue */
 	uint8_t	vs_status;		/* value from last status write */
 	uint8_t	vs_isr;			/* ISR flags, if not MSI-X */
 	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
+	uint32_t vs_dfselect;		/* Current DFSELECT value */
+	uint32_t vs_gfselect;		/* Current GFSELECT value */
+	uint8_t	vs_devcfg_gen;		/* Generation of device config space */
+	virtio_pci_capcfg_t vs_caps[VIRTIO_PCI_CAP_MAX]; /* PCI capabilities */
+	virtio_pci_capcfg_t *vs_pcicap;	/* PCI configuration access cap */
+	uint8_t vs_ncaps;		/* Number of PCI capabilities */
 };
 
 #define	VS_LOCK(vs)							\
@@ -261,6 +296,7 @@ struct virtio_consts {
 	int	vc_nvq;			/* number of virtual queues */
 	size_t	vc_cfgsize;		/* size of dev-specific config regs */
 	void	(*vc_reset)(void *);	/* called on virtual device reset */
+	void	(*vc_qinit)(void *, uint64_t, bool);
 	void	(*vc_qnotify)(void *, struct vqueue_info *);
 					/* called on QNOTIFY if no VQ notify */
 	int	(*vc_cfgread)(void *, int, int, uint32_t *);
@@ -269,7 +305,12 @@ struct virtio_consts {
 					/* called to write config regs */
 	void    (*vc_apply_features)(void *, uint64_t);
 				/* called to apply negotiated features */
-	uint64_t vc_hv_caps;		/* hypervisor-provided capabilities */
+	void (*vc_set_msix)(void *, int);
+	void (*vc_update_msix)(void *, uint64_t);
+	uint64_t vc_hv_caps_legacy;
+				/* hypervisor-provided capabilities (legacy) */
+	uint64_t vc_hv_caps_modern;
+				/* hypervisor-provided capabilities (modern) */
 	void	(*vc_pause)(void *);	/* called to pause device activity */
 	void	(*vc_resume)(void *);	/* called to resume device activity */
 	int	(*vc_snapshot)(void *, struct vm_snapshot_meta *);
@@ -295,6 +336,7 @@ struct virtio_consts {
  */
 #define	VQ_ALLOC	0x01	/* set once we have a pfn */
 #define	VQ_BROKED	0x02	/* ??? */
+#define	VQ_ENABLED	0x04	/* set if the queue was enabled */
 struct vqueue_info {
 	uint16_t vq_qsize;	/* size of this queue (a power of 2) */
 	void	(*vq_notify)(void *, struct vqueue_info *);
@@ -310,6 +352,9 @@ struct vqueue_info {
 	uint16_t vq_msix_idx;	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
 
 	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
+	uint64_t vq_desc_gpa;	/* PA of virtqueue descriptors ring */
+	uint64_t vq_avail_gpa;	/* PA of virtqueue avail ring */
+	uint64_t vq_used_gpa;	/* PA of virtqueue used ring */
 
 	struct vring_desc *vq_desc;	/* descriptor array */
 	struct vring_avail *vq_avail;	/* the "avail" ring */
@@ -352,14 +397,15 @@ static inline void
 vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 {
 
-	if (pci_msix_enabled(vs->vs_pi))
+	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0)
+		return;
+
+	if (pci_msix_enabled(vs->vs_pi)) {
 		pci_generate_msix(vs->vs_pi, msix_idx);
-	else {
-		VS_LOCK(vs);
+	} else {
 		vs->vs_isr |= isr;
 		pci_generate_msi(vs->vs_pi, 0);
 		pci_lintr_assert(vs->vs_pi);
-		VS_UNLOCK(vs);
 	}
 }
 
@@ -372,6 +418,17 @@ vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 {
 
 	vi_interrupt(vs, VIRTIO_PCI_ISR_INTR, vq->vq_msix_idx);
+}
+
+/*
+ * Deliver an interrupt to guest on device-specific configuration changes
+ * (if possible, or a generic MSI interrupt if not using MSI-X).
+ */
+static inline void
+vq_devcfg_changed(struct virtio_softc *vs)
+{
+	vs->vs_flags |= VIRTIO_DEVCFG_CHG;
+	vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
 }
 
 static inline void
@@ -394,6 +451,10 @@ vq_kick_disable(struct vqueue_info *vq)
 	vq->vq_used->flags |= VRING_USED_F_NO_NOTIFY;
 }
 
+#define	VIRTIO_LEGACY_BAR	0	/* BAR for virtio legacy cfg regs */
+#define	VIRTIO_MSIX_BAR		1	/* BAR for host MSI-X tables */
+#define	VIRTIO_MODERN_BAR	2	/* BAR for virtio modern cfg regs */
+
 struct iovec;
 
 /*
@@ -410,10 +471,16 @@ struct vi_req {
 void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 			void *dev_softc, struct pci_devinst *pi,
 			struct vqueue_info *queues);
-int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
-void	vi_reset_dev(struct virtio_softc *);
-void	vi_set_io_bar(struct virtio_softc *, int);
-
+int	vi_intr_init(struct virtio_softc *vs, int use_msix);
+void	vi_pci_init(struct pci_devinst *, virtio_mode_t, uint16_t,
+   uint16_t, uint8_t);
+int	vi_pcibar_setup(struct virtio_softc *);
+virtio_pci_capcfg_t *vi_pci_cfg_bytype(struct virtio_softc *, uint8_t);
+virtio_pci_capcfg_t *vi_pci_cfg_bycapaddr(struct virtio_softc *,
+   uint32_t, uint32_t);
+virtio_pci_capcfg_t *vi_pci_cfg_bybaraddr(struct virtio_softc *,
+   uint8_t, uint64_t, uint32_t);void	vi_reset_dev(struct virtio_softc *);
+int	vi_is_modern(struct virtio_softc *);
 int	vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	    struct vi_req *reqp);
 void	vq_retchains(struct vqueue_info *vq, uint16_t n_chains);
@@ -423,6 +490,10 @@ void	vq_relchain_publish(struct vqueue_info *vq);
 void	vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t iolen);
 void	vq_endchains(struct vqueue_info *vq, int used_all_avail);
 
+int	vi_pci_cfgread(struct pci_devinst *pi, int offset, int bytes,
+	    uint32_t *retval);
+int	vi_pci_cfgwrite(struct pci_devinst *pi, int offset, int bytes,
+	    uint32_t val);
 uint64_t vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset,
 	    int size);
 void	vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset,

@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1084,8 +1085,9 @@ pci_emul_add_boot_device(struct pci_devinst *pi, int bootindex)
 }
 
 #define	CAP_START_OFFSET	0x40
-static int
-pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata, int caplen)
+int
+pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata, int caplen,
+   int *capoffp)
 {
 	int i, capoff, reallen;
 	uint16_t sts;
@@ -1120,6 +1122,10 @@ pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata, int caplen)
 
 	pi->pi_prevcap = capoff;
 	pi->pi_capend = capoff + reallen - 1;
+
+	if (capoffp != NULL)
+		*capoffp = capoff;
+
 	return (0);
 }
 
@@ -1197,7 +1203,8 @@ pci_emul_add_msicap(struct pci_devinst *pi, int msgnum)
 
 	pci_populate_msicap(&msicap, msgnum, 0);
 
-	return (pci_emul_add_capability(pi, (u_char *)&msicap, sizeof(msicap)));
+	return (pci_emul_add_capability(pi, (u_char *)&msicap,
+	   sizeof(msicap), NULL));
 }
 
 static void
@@ -1272,7 +1279,7 @@ pci_emul_add_msixcap(struct pci_devinst *pi, int msgnum, int barnum)
 				tab_size + pi->pi_msix.pba_size);
 
 	return (pci_emul_add_capability(pi, (u_char *)&msixcap,
-					sizeof(msixcap)));
+					sizeof(msixcap), NULL));
 }
 
 static void
@@ -1372,7 +1379,8 @@ pci_emul_add_pciecap(struct pci_devinst *pi, int type)
 		pciecap.link_status = 0x11;		/* gen1, x1 */
 	}
 
-	err = pci_emul_add_capability(pi, (u_char *)&pciecap, sizeof(pciecap));
+	err = pci_emul_add_capability(pi, (u_char *)&pciecap,
+	   sizeof(pciecap), NULL);
 	return (err);
 }
 
@@ -2315,20 +2323,18 @@ pci_cfgrw(int in, int bus, int slot, int func, int coff, int bytes,
 	 */
 	if (in) {
 		/* Let the device emulation override the default handler */
-		if (pe->pe_cfgread != NULL) {
+		needcfg = PE_CFGRW_DEFAULT;
+		if (pe->pe_cfgread != NULL)
 			needcfg = pe->pe_cfgread(pi, coff, bytes, valp);
-		} else {
-			needcfg = 1;
-		}
 
-		if (needcfg)
+		if (needcfg != PE_CFGRW_DROP)
 			*valp = CFGREAD(pi, coff, bytes);
 
 		pci_emul_hdrtype_fixup(bus, slot, coff, bytes, valp);
 	} else {
 		/* Let the device emulation override the default handler */
 		if (pe->pe_cfgwrite != NULL &&
-		    (*pe->pe_cfgwrite)(pi, coff, bytes, *valp) == 0)
+		    (*pe->pe_cfgwrite)(pi, coff, bytes, *valp) == PE_CFGRW_DROP)
 			return;
 
 		/*

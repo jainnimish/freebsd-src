@@ -2,8 +2,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
- * All rights reserved.
  * Copyright 2020-2021 Joyent, Inc.
+ * Copyright (c) 2026 Oxide Computer Company
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,6 +55,7 @@
 #include "pci_emul.h"
 #include "virtio.h"
 #include "block_if.h"
+#include "iov.h"
 
 #define	VTBLK_BSIZE	512
 #define	VTBLK_RINGSZ	128
@@ -211,7 +213,8 @@ static struct virtio_consts vtblk_vi_consts = {
 	.vc_cfgread =	pci_vtblk_cfgread,
 	.vc_cfgwrite =	pci_vtblk_cfgwrite,
 	.vc_apply_features = NULL,
-	.vc_hv_caps =	VTBLK_S_HOSTCAPS,
+	.vc_hv_caps_legacy = VTBLK_S_HOSTCAPS,
+	.vc_hv_caps_modern = VTBLK_S_HOSTCAPS,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vtblk_pause,
 	.vc_resume =	pci_vtblk_resume,
@@ -297,22 +300,22 @@ pci_vtblk_done(struct blockif_req *br, int err)
 static void
 pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 {
-	struct virtio_blk_hdr *vbh;
+	struct iov_iter iter;
+	struct virtio_blk_hdr vbh;
 	struct pci_vtblk_ioreq *io;
 	int i, n;
 	int err;
-	ssize_t iolen;
 	int writeop, type;
 	struct vi_req req;
 	struct iovec iov[BLOCKIF_IOV_MAX + 2];
-	struct virtio_blk_discard_write_zeroes *discard;
+	struct virtio_blk_discard_write_zeroes discard;
+	size_t bsz;
 
 	n = vq_getchain(vq, iov, BLOCKIF_IOV_MAX + 2, &req);
 
 	/*
-	 * The first descriptor will be the read-only fixed header,
-	 * and the last is for status (hence +2 above and below).
-	 * The remaining iov's are the actual data I/O vectors.
+	 * Use modern framing since VIRTIO_F_ANY_LAYOUT is
+	 * offered by all devices.
 	 *
 	 * XXX - note - this fails on crash dump, which does a
 	 * VIRTIO_BLK_T_FLUSH with a zero transfer length
@@ -320,63 +323,45 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	assert(n >= 2 && n <= BLOCKIF_IOV_MAX + 2);
 
 	io = &sc->vbsc_ios[req.idx];
+
+	/* Set up our iov iterator to copy-out the header */
 	assert(req.readable != 0);
-	assert(iov[0].iov_len == sizeof(struct virtio_blk_hdr));
-	vbh = (struct virtio_blk_hdr *)iov[0].iov_base;
-	memcpy(&io->io_req.br_iov, &iov[1], sizeof(struct iovec) * (n - 2));
-	io->io_req.br_iovcnt = n - 2;
-	io->io_req.br_offset = vbh->vbh_sector * VTBLK_BSIZE;
-	io->io_status = (uint8_t *)iov[--n].iov_base;
+	iter.hv = req.readable;
+	iter.ind = iter.off = 0;
+	iter.iov = iov;
+
+	assert(iov_extract(&vbh, sizeof(struct virtio_blk_hdr), &iter) == 0);
+	io->io_req.br_offset = vbh.vbh_sector * VTBLK_BSIZE;
+
+	/* Is the status byte a separate buffer? */
+	if (iov[n - 1].iov_len == 1)
+		io->io_status = (uint8_t *)(iov[--n].iov_base);
+	else
+		io->io_status =
+		   (uint8_t *)(iov[n - 1].iov_base) + --iov[n - 1].iov_len;
 	assert(req.writable != 0);
-	assert(iov[n].iov_len == 1);
 
 	/*
 	 * XXX
 	 * The guest should not be setting the BARRIER flag because
 	 * we don't advertise the capability.
 	 */
-	type = vbh->vbh_type & ~VBH_FLAG_BARRIER;
+	type = vbh.vbh_type & ~VBH_FLAG_BARRIER;
 	writeop = (type == VBH_OP_WRITE || type == VBH_OP_DISCARD);
-	/*
-	 * - Write op implies read-only descriptor
-	 * - Read/ident op implies write-only descriptor
-	 *
-	 * By taking away either the read-only fixed header or the write-only
-	 * status iovec, the following condition should hold true.
-	 */
-	assert(n == (writeop ? req.readable : req.writable));
-
-	iolen = 0;
-	for (i = 1; i < n; i++) {
-		iolen += iov[i].iov_len;
-	}
-	io->io_req.br_resid = iolen;
-
-	DPRINTF(("virtio-block: %s op, %zd bytes, %d segs, offset %ld",
-		 writeop ? "write/discard" : "read/ident", iolen, i - 1,
-		 io->io_req.br_offset));
 
 	switch (type) {
-	case VBH_OP_READ:
-		err = blockif_read(sc->bc, &io->io_req);
-		break;
-	case VBH_OP_WRITE:
-		err = blockif_write(sc->bc, &io->io_req);
-		break;
 	case VBH_OP_DISCARD:
 		/*
 		 * We currently only support a single request, if the guest
 		 * has submitted a request that doesn't conform to the
 		 * requirements, we return a error.
+		 *
+		 * The segments to discard are provided rather than data
 		 */
-		if (iov[1].iov_len != sizeof (*discard)) {
+		if (iov_extract(&discard, sizeof(discard), &iter) == 0) {
 			pci_vtblk_done_locked(io, EINVAL);
 			return;
 		}
-
-		/* The segments to discard are provided rather than data */
-		discard = (struct virtio_blk_discard_write_zeroes *)
-		    iov[1].iov_base;
 
 		/*
 		 * virtio v1.1 5.2.6.2:
@@ -388,33 +373,75 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		 *
 		 * Currently there are no known flags for a DISCARD request.
 		 */
-		if (discard->flags.unmap != 0 || discard->flags.reserved != 0) {
+		if (discard.flags.unmap != 0 || discard.flags.reserved != 0) {
 			pci_vtblk_done_locked(io, ENOTSUP);
 			return;
 		}
 
 		/* Make sure the request doesn't exceed our size limit */
-		if (discard->num_sectors > VTBLK_MAX_DISCARD_SECT) {
+		if (discard.num_sectors > VTBLK_MAX_DISCARD_SECT) {
 			pci_vtblk_done_locked(io, EINVAL);
 			return;
 		}
 
-		io->io_req.br_offset = discard->sector * VTBLK_BSIZE;
-		io->io_req.br_resid = discard->num_sectors * VTBLK_BSIZE;
+		io->io_req.br_iovcnt = 0;
+		io->io_req.br_offset = discard.sector * VTBLK_BSIZE;
+		io->io_req.br_resid = discard.num_sectors * VTBLK_BSIZE;
+
+		DPRINTF(("virtio-block: discard op, %zd bytes, offset %ld",
+		    io->io_req.br_resid, io->io_req.br_offset));
 		err = blockif_delete(sc->bc, &io->io_req);
+		assert(err == 0);
+		return;
+
+	case VBH_OP_IDENT:
+		/* We need to be at a device writable buffer.
+		 * If we're here, the header was the sole
+		 * read-only descriptor.
+		 */
+		assert(iter.off == 0);
+		assert(iter.hv == 0);
+		iter.hv = req.writable;
+		bsz = sizeof(sc->vbsc_ident);
+
+		DPRINTF(("virtio-block: ident op, %zd bytes", bsz));
+
+		/* S/n is not zero-terminated. */
+		if (buf_to_iov(sc->vbsc_ident, bsz, iov, n, iter.ind) != bsz)
+			pci_vtblk_done_locked(io, ENOSPC);
+		else
+			pci_vtblk_done_locked(io, 0);
+		return;
+	default:
+		break;
+	}
+
+	/* Was the header a separate buffer? */
+	if (iter.off > 0)
+		IOVEC_ADVANCE(&iov[iter.ind], iter.off);
+
+	memcpy(&io->io_req.br_iov, &iov[iter.ind], sizeof(struct iovec) * (n - iter.ind));
+	io->io_req.br_iovcnt = n - iter.ind;
+
+	for (io->io_req.br_resid = 0, i = iter.ind; i < n; i++) {
+		io->io_req.br_resid += iov[i].iov_len;
+	}
+
+	DPRINTF(("virtio-block: %s op, %zd bytes, %d segs, offset %ld",
+	writeop ? "write" : "read",
+	io->io_req.br_resid, io->io_req.br_iovcnt, io->io_req.br_offset));
+
+	switch (type) {
+	case VBH_OP_READ:
+		err = blockif_read(sc->bc, &io->io_req);
+		break;
+	case VBH_OP_WRITE:
+		err = blockif_write(sc->bc, &io->io_req);
 		break;
 	case VBH_OP_FLUSH:
 	case VBH_OP_FLUSH_OUT:
 		err = blockif_flush(sc->bc, &io->io_req);
 		break;
-	case VBH_OP_IDENT:
-		/* Assume a single buffer */
-		/* S/n equal to buffer is not zero-terminated. */
-		memset(iov[1].iov_base, 0, iov[1].iov_len);
-		strncpy(iov[1].iov_base, sc->vbsc_ident,
-		    MIN(iov[1].iov_len, sizeof(sc->vbsc_ident)));
-		pci_vtblk_done_locked(io, 0);
-		return;
 	default:
 		pci_vtblk_done_locked(io, EOPNOTSUPP);
 		return;
@@ -440,8 +467,7 @@ pci_vtblk_resized(struct blockif_ctxt *bctxt __unused, void *arg,
 	sc = arg;
 
 	sc->vbsc_cfg.vbc_capacity = new_size / VTBLK_BSIZE; /* 512-byte units */
-	vi_interrupt(&sc->vbsc_vs, VIRTIO_PCI_ISR_CONFIG,
-	    sc->vbsc_vs.vs_msix_cfg_idx);
+	vq_devcfg_changed(&sc->vbsc_vs);
 }
 
 static int
@@ -486,8 +512,10 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	bcopy(&vtblk_vi_consts, &sc->vbsc_consts, sizeof (vtblk_vi_consts));
-	if (blockif_candelete(sc->bc))
-		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_DISCARD;
+	if (blockif_candelete(sc->bc)) {
+		sc->vbsc_consts.vc_hv_caps_legacy |= VTBLK_F_DISCARD;
+		sc->vbsc_consts.vc_hv_caps_modern |= VTBLK_F_DISCARD;
+	}
 
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
 
@@ -544,23 +572,15 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vbsc_cfg.max_discard_seg = VTBLK_MAX_DISCARD_SEG;
 	sc->vbsc_cfg.discard_sector_alignment = MAX(sectsz, sts) / VTBLK_BSIZE;
 
-	/*
-	 * Should we move some of this into virtio.c?  Could
-	 * have the device, class, and subdev_0 as fields in
-	 * the virtio constants structure.
-	 */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_BLOCK);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_BLOCK);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	vi_pci_init(pi, VIRTIO_MODE_TRANSITIONAL, VIRTIO_DEV_BLOCK,
+	   VIRTIO_ID_BLOCK, PCIC_STORAGE);
 
-	if (vi_intr_init(&sc->vbsc_vs, 1, fbsdrun_virtio_msix())) {
+	if (vi_intr_init(&sc->vbsc_vs, fbsdrun_virtio_msix()) ||
+	   vi_pcibar_setup(&sc->vbsc_vs)) {
 		blockif_close(sc->bc);
 		free(sc);
 		return (1);
 	}
-	vi_set_io_bar(&sc->vbsc_vs, 0);
 	blockif_register_resize_callback(sc->bc, pci_vtblk_resized, sc);
 	return (0);
 }
@@ -590,6 +610,8 @@ static const struct pci_devemu pci_de_vblk = {
 	.pe_emu =	"virtio-blk",
 	.pe_init =	pci_vtblk_init,
 	.pe_legacy_config = blockif_legacy_config,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

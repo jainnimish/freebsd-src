@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -84,6 +85,17 @@ struct pci_devemu {
 
 };
 #define PCI_EMUL_SET(x)   DATA_SET(pci_devemu_set, x)
+
+/*
+ * These values are returned by the config space read/write callbacks
+ * (pe_cfgwrite and pe_cfgread in the above structure).
+ *
+ * A return value of PE_CFGRW_DEFAULT will cause the PCI emulation framework to
+ * continue on and access the configuration space as if the callback did not
+ * exist, whereas PE_CFGRW_DROP will not.
+ */
+#define	PE_CFGRW_DROP		0
+#define	PE_CFGRW_DEFAULT	1
 
 enum pcibar_type {
 	PCIBAR_NONE,
@@ -238,6 +250,8 @@ int 	pci_emul_alloc_rom(struct pci_devinst *const pdi, const uint64_t size,
     	    void **const addr);
 int 	pci_emul_add_boot_device(struct pci_devinst *const pi,
 	    const int bootindex);
+int	pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata,
+	    int caplen, int *capoffp);
 int	pci_emul_add_msicap(struct pci_devinst *pi, int msgnum);
 int	pci_emul_add_pciecap(struct pci_devinst *pi, int pcie_device_type);
 void	pci_emul_capwrite(struct pci_devinst *pi, int offset, int bytes,

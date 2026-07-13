@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
+ * Copyright (c) 2026 Oxide Computer Company
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -67,9 +68,11 @@
 #define VTNET_MIN_MTU	ETHERMIN
 #define VTNET_MAX_MTU	65535
 
-#define VTNET_S_HOSTCAPS      \
-  ( VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | \
-    VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_RING_F_INDIRECT_DESC)
+#define	VTNET_S_HOSTCAPS_MODERN      \
+	(VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | \
+	VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_NET_F_MRG_RXBUF)
+#define	VTNET_S_HOSTCAPS_LEGACY      \
+	(VTNET_S_HOSTCAPS_MODERN | VIRTIO_F_NOTIFY_ON_EMPTY)
 
 /*
  * PCI config-space "registers"
@@ -147,7 +150,8 @@ static struct virtio_consts vtnet_vi_consts = {
 	.vc_cfgread =	pci_vtnet_cfgread,
 	.vc_cfgwrite =	pci_vtnet_cfgwrite,
 	.vc_apply_features = pci_vtnet_neg_features,
-	.vc_hv_caps =	VTNET_S_HOSTCAPS,
+	.vc_hv_caps_legacy = VTNET_S_HOSTCAPS_LEGACY,
+	.vc_hv_caps_modern = VTNET_S_HOSTCAPS_MODERN,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vtnet_pause,
 	.vc_resume =	pci_vtnet_resume,
@@ -554,6 +558,15 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 }
 #endif
 
+static inline int
+pci_vtnet_free_softstate(struct pci_vtnet_softc *sc, int ret)
+{
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+
+	return (ret);
+}
+
 static int
 pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
@@ -585,28 +598,23 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	value = get_config_value_node(nvl, "mac");
 	if (value != NULL) {
 		err = net_parsemac(value, sc->vsc_config.mac);
-		if (err) {
-			free(sc);
-			return (err);
-		}
+		if (err)
+			return (pci_vtnet_free_softstate(sc, err));
 	} else
 		net_genmac(pi, sc->vsc_config.mac);
 
 	value = get_config_value_node(nvl, "mtu");
 	if (value != NULL) {
 		err = net_parsemtu(value, &mtu);
-		if (err) {
-			free(sc);
-			return (err);
-		}
+		if (err)
+			return (pci_vtnet_free_softstate(sc, err));
 
 		if (mtu < VTNET_MIN_MTU || mtu > VTNET_MAX_MTU) {
-			err = EINVAL;
 			errno = EINVAL;
-			free(sc);
-			return (err);
+			return (pci_vtnet_free_softstate(sc, errno));
 		}
-		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MTU;
+		sc->vsc_consts.vc_hv_caps_legacy |= VIRTIO_NET_F_MTU;
+		sc->vsc_consts.vc_hv_caps_modern |= VIRTIO_NET_F_MTU;
 	}
 	sc->vsc_config.mtu = mtu;
 
@@ -614,13 +622,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (get_config_value_node(nvl, "backend") != NULL) {
 		err = netbe_init(&sc->vsc_be, nvl, pci_vtnet_rx_callback, sc);
 		if (err) {
-			free(sc);
-			return (err);
+			netbe_cleanup(sc->vsc_be);
+			return (pci_vtnet_free_softstate(sc, err));
 		}
 	}
 
-	sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MRG_RXBUF |
-	    netbe_get_cap(sc->vsc_be);
+	sc->vsc_consts.vc_hv_caps_legacy |= netbe_get_cap(sc->vsc_be);
+	sc->vsc_consts.vc_hv_caps_modern |= netbe_get_cap(sc->vsc_be);
 
 	/*
 	 * Since we do not actually support multiqueue,
@@ -628,27 +636,20 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 */
 	sc->vsc_config.max_virtqueue_pairs = 1;
 
+	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
+	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
+
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_NETWORK);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_NETWORK);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	vi_pci_init(pi, VIRTIO_MODE_TRANSITIONAL, VIRTIO_DEV_NET,
+	   VIRTIO_ID_NETWORK, PCIC_NETWORK);
 
 	/* Link is always up. */
 	sc->vsc_config.status = 1;
 
-	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
-	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
-
 	/* use BAR 1 to map MSI-X table and PBA, if we're using MSI-X */
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix())) {
-		free(sc);
-		return (1);
-	}
-
-	/* use BAR 0 to map config regs in IO space */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	if (vi_intr_init(&sc->vsc_vs, fbsdrun_virtio_msix()) ||
+	   vi_pcibar_setup(&sc->vsc_vs))
+		return (pci_vtnet_free_softstate(sc, 1));
 
 	sc->resetting = 0;
 
@@ -685,6 +686,7 @@ pci_vtnet_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 		 */
 		ptr = &sc->vsc_config.mac[offset];
 		memcpy(ptr, &value, size);
+		vq_devcfg_changed(&sc->vsc_vs);
 	} else {
 		/* silently ignore other writes */
 		DPRINTF(("vtnet: write to readonly reg %d", offset));
@@ -710,16 +712,18 @@ pci_vtnet_neg_features(void *vsc, uint64_t negotiated_features)
 	struct pci_vtnet_softc *sc = vsc;
 
 	sc->vsc_features = negotiated_features;
+	sc->vhdrlen = sizeof(struct virtio_net_rxhdr);
 
 	if (negotiated_features & VIRTIO_NET_F_MRG_RXBUF) {
-		sc->vhdrlen = sizeof(struct virtio_net_rxhdr);
 		sc->rx_merge = 1;
 	} else {
 		/*
 		 * Without mergeable rx buffers, virtio-net header is 2
-		 * bytes shorter than sizeof(struct virtio_net_rxhdr).
+		 * bytes shorter than sizeof(struct virtio_net_rxhdr)
+		 * unless we're in modern mode.
 		 */
-		sc->vhdrlen = sizeof(struct virtio_net_rxhdr) - 2;
+		if (vi_is_modern(&sc->vsc_vs) == 0)
+			sc->vhdrlen -= 2;
 		sc->rx_merge = 0;
 	}
 
@@ -803,6 +807,8 @@ done:
 static const struct pci_devemu pci_de_vnet = {
 	.pe_emu = 	"virtio-net",
 	.pe_init =	pci_vtnet_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_legacy_config = netbe_legacy_config,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,

@@ -37,10 +37,26 @@
 /* Number of additional iovecs required for split_iov() */
 #define	SPLIT_IOV_ADDL_IOV	2
 
+#define	IOVEC_ADVANCE(iovp, amt)	do {				\
+	struct iovec *__iovp = (iovp);					\
+	size_t __amt = (amt);						\
+	assert(__amt <= __iovp->iov_len);			\
+	__iovp->iov_len -= __amt;					\
+	__iovp->iov_base = (char *)__iovp->iov_base + __amt;		\
+} while(0)
+
+struct iov_iter {
+	int hv;			/* Number of iovs we can access */
+	int ind;		/* Index of starting iov */
+	size_t off;		/* Offset within current iov */
+	struct iovec *iov;	/* Pointer to array of iovs */
+};
+
 struct iovec *split_iov(struct iovec *, size_t *, size_t, size_t *);
 size_t count_iov(const struct iovec *, size_t);
 bool check_iov_len(const struct iovec *, size_t, size_t);
 size_t iov_to_buf(const struct iovec *, size_t, void **);
-size_t buf_to_iov(const void *, size_t, const struct iovec *, size_t);
+size_t buf_to_iov(const void *, size_t, const struct iovec *, size_t, size_t);
+int iov_extract(void *, size_t, struct iov_iter *);
 
 #endif	/* _IOV_H_ */

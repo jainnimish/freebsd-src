@@ -242,6 +242,16 @@ out:
 	return (-1);
 }
 
+void
+bhyve_cfg_warn(const char *old, const char *new, const char *msg)
+{
+	if (get_config_value(old) != NULL &&
+	    get_config_value(new) == NULL) {
+		warnx("'%s' is deprecated, use '%s' instead", old, msg);
+		set_config_value(new, get_config_value(old));
+	}
+}
+
 static void
 calc_mem_affinity(size_t vm_memsize)
 {
@@ -551,12 +561,6 @@ paddr_host2guest(struct vmctx *ctx, void *addr)
 int
 fbsdrun_virtio_msix(void)
 {
-	if (get_config_value("virtio_msix") != NULL &&
-	    get_config_value("virtio.msix") == NULL) {
-		warnx("virtio_msix is deprecated, use virtio.msix instead");
-		set_config_value("virtio.msix", get_config_value("virtio_msix"));
-	}
-
 	return (get_config_bool_default("virtio.msix", true));
 }
 
