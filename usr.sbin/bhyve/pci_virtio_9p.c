@@ -213,7 +213,7 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 			    iov[i].iov_len));
 		}
 
-		l9p_connection_recv(sc->vsc_conn, iov, preq->vsr_respidx, preq);
+		(void) l9p_connection_recv(sc->vsc_conn, iov, preq->vsr_respidx, preq);
 	}
 }
 

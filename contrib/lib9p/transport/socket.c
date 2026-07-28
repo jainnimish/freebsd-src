@@ -199,13 +199,15 @@ l9p_socket_thread(void *arg)
 	size_t length;
 
 	for (;;) {
-		if (l9p_socket_readmsg(sc, &buf, &length) != 0)
+		if (l9p_socket_readmsg(sc, &buf, &length) != 0) {
+			free(buf);
 			break;
+		}
 
 		iov.iov_base = buf;
 		iov.iov_len = length;
-		l9p_connection_recv(sc->ls_conn, &iov, 1, NULL);
-		free(buf);
+		if (l9p_connection_recv(sc->ls_conn, &iov, 1, buf) != 0)
+			free(buf);
 	}
 
 	L9P_LOG(L9P_INFO, "connection closed");
@@ -283,13 +285,16 @@ l9p_socket_get_response_buffer(struct l9p_request *req, struct iovec *iov,
 }
 
 static int
-l9p_socket_send_response(struct l9p_request *req __unused,
+l9p_socket_send_response(struct l9p_request *req,
     const struct iovec *iov, const size_t niov __unused, const size_t iolen,
     void *arg)
 {
 	struct l9p_socket_softc *sc = (struct l9p_socket_softc *)arg;
 
 	assert(sc->ls_fd >= 0);
+
+	/* Safe to free the request buffer now. */
+	free(req->lr_aux);
 
 	L9P_LOG(L9P_DEBUG, "%p: sending reply, buf=%p, size=%d", arg,
 	    iov[0].iov_base, iolen);

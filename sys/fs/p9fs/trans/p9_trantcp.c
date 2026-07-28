@@ -32,17 +32,22 @@
 
 #include <sys/param.h>
 #include <sys/kernel.h>
+#include <sys/kthread.h>
 #include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/sx.h>
+#include <sys/proc.h>
+#include <sys/protosw.h>
 #include <sys/sysctl.h>
+#include <sys/systm.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
+#include <sys/sx.h>
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/uio.h>
+#include <machine/atomic.h>
 
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -58,10 +63,24 @@
 #define IN9P_LOCK_DESTROY(_sc) sx_destroy(IN9P_SX(_sc))
 static MALLOC_DEFINE(M_IN9P_TRANS, "in9p_sc", "P9 INET transport");
 
+/*
+ * Each request thread atomically increments the nreq counter.
+ * In case of an error, the broken flag is set.
+ * Then, all future requests will immediately return an error.
+ * Pending requests wake up from their sleep (eventually), and return.
+ * When all existing threads are dealt with, and it was possible to
+ * connect to a new socket, the broken flag is reset.
+ * Otherwise, this channel will remain a zombie until umount.
+ */
 struct in9p_sc {
+	volatile u_long nreq;
+	volatile uint8_t broken;
+	uint8_t upcall_set;
 	struct socket *so;
 	struct sockaddr_in sin;
 	struct sx in9p_sx;
+	struct cv in9p_rx_cv;
+	struct cv in9p_td_done;
 	STAILQ_ENTRY(in9p_sc) chan_next;
 };
 
@@ -80,13 +99,82 @@ static int trans_loaded = 0;
  */
 SYSCTL_NODE(_vfs, OID_AUTO, 9p, CTLFLAG_RW, 0, "9P File System Protocol");
 
-static unsigned int in9p_ackmaxidle = 15;
-SYSCTL_UINT(_vfs_9p, OID_AUTO, inmaxidle, CTLFLAG_RW, &in9p_ackmaxidle, 0,
+static unsigned int in9p_ackmaxidle = 60;
+SYSCTL_UINT(_vfs_9p, OID_AUTO, netmaxidle, CTLFLAG_RW, &in9p_ackmaxidle, 0,
     "Maximum time to wait for P9 server to respond");
 
 /* No way to find out what clnt->msize is for now. */
 #define P9_MTU 131072
 #define IN9P_SORECEIVE_CHUNK (1024 * 16)
+
+struct p9_header {
+	uint32_t size;
+	uint8_t type;
+	uint16_t tag;
+} __packed;
+
+static inline void
+in9p_sock_clean(struct in9p_sc *chan)
+{
+	if (chan->so != NULL) {
+		if (chan->upcall_set != 0) {
+			SOCK_RECVBUF_LOCK(chan->so);
+			soupcall_clear(chan->so, SO_RCV);
+			SOCK_RECVBUF_UNLOCK(chan->so);
+			chan->upcall_set = 0;
+		}
+		soclose(chan->so);
+		chan->so = NULL;
+	}
+}
+
+static int
+in9p_sock_upcall(struct socket *so, void *arg, int flags __unused)
+{
+	struct in9p_sc *chan = arg;
+
+	if (!soreadable(so))
+		return (SU_OK);
+
+	chan->upcall_set = 0;
+	cv_signal(&chan->in9p_rx_cv);
+
+	return (SU_ISCONNECTED);
+}
+
+static void
+in9p_receive_thread(void *arg)
+{
+	struct in9p_sc *chan = arg;
+	struct socket *so = chan->so;
+	struct p9_header hdr;
+
+	for (;;) {
+		if (atomic_load_acq_long(&chan->broken))
+			break;
+
+		SOCK_RECVBUF_LOCK(so);
+		if (!soreadable(so)) {
+			soupcall_set(so, SO_RCV, in9p_sock_upcall, chan);
+			chan->upcall_set = 1;
+			cv_wait(&chan->in9p_rx_cv, SOCK_RECVBUF_MTX(so));
+		}
+
+		/* Recheck whether the channel is broken after wake up. */
+		if (atomic_load_acq_long(&chan->broken)) {
+			SOCK_RECVBUF_UNLOCK(so);
+			break;
+		}
+
+		/* Wakeup whoseever tag it is. */
+		m_copydata(so->so_rcv.sb_mb, 0, sizeof(hdr), &hdr);
+		wakeup((void *)hdr.tag);
+		cv_wait(&chan->in9p_rx_cv, SOCK_RECVBUF_MTX(so));
+		SOCK_RECVBUF_UNLOCK(so);
+	}
+	cv_signal(&chan->in9p_td_done);
+	kthread_exit();
+}
 
 static int
 in9p_sock_create(struct in9p_sc *chan)
@@ -95,6 +183,7 @@ in9p_sock_create(struct in9p_sc *chan)
 	struct sockopt sopt;
 	struct timeval ts;
 	int error, val;
+	size_t hdr_sz;
 
 	if ((error = socreate(PF_INET, &chan->so, SOCK_STREAM,
 	    IPPROTO_TCP, curthread->td_ucred, curthread)) != 0)
@@ -107,6 +196,8 @@ in9p_sock_create(struct in9p_sc *chan)
 	bzero(&sopt, sizeof(struct sockopt));
 	ts.tv_sec = in9p_ackmaxidle;
 	ts.tv_usec = 0;
+
+	/* Set the socket options. */
 	sopt.sopt_dir = SOPT_SET;
 	sopt.sopt_level = SOL_SOCKET;
 	sopt.sopt_name = SO_RCVTIMEO;
@@ -119,17 +210,26 @@ in9p_sock_create(struct in9p_sc *chan)
 	if ((error = sosetopt(so, &sopt)) != 0)
 		return (error);
 
-	val = 1;
-	sopt.sopt_level = IPPROTO_TCP;
-	sopt.sopt_name = TCP_NODELAY;
+	val = sizeof(p9_header);
+	sopt.sopt_name = SO_RCVLOWAT;
 	sopt.sopt_val = &val;
 	sopt.sopt_valsize = sizeof(val);
 	if ((error = sosetopt(so, &sopt)) != 0)
 		return (error);
 
-	val = 1;
-	sopt.sopt_level = SOL_SOCKET;
+	hdr_sz = sizeof(struct p9_header);
 	sopt.sopt_name = SO_KEEPALIVE;
+	sopt.sopt_val = &hdr_sz;
+	sopt.sopt_valsize = sizeof(hdr_sz);
+	if ((error = sosetopt(so, &sopt)) != 0)
+		return (error);
+
+	/* Set the protocol options. */
+	val = 1;
+	sopt.sopt_level = IPPROTO_TCP;
+	sopt.sopt_name = TCP_NODELAY;
+	sopt.sopt_val = &val;
+	sopt.sopt_valsize = sizeof(val);
 	if ((error = sosetopt(so, &sopt)) != 0)
 		return (error);
 
@@ -150,6 +250,17 @@ in9p_sock_create(struct in9p_sc *chan)
 		so->so_error = 0;
 	}
 	SOCK_UNLOCK(so);
+	if (error)
+		return (error);
+
+	SOCK_RECVBUF_LOCK(so);
+	soupcall_set(so, SO_RCV, in9p_sock_upcall, chan);
+	SOCK_RECVBUF_UNLOCK(so);
+	chan->upcall_set = 1;
+
+	/* Add the response-polling thread. */
+	error = kthread_add(in9p_receive_thread, chan, NULL, NULL,
+	   0, 0, "in9p_receive_thread");
 	if (error)
 		return (error);
 
@@ -175,6 +286,8 @@ in9p_create(const char *mount_tag, void **handlep)
 	chan = malloc(sizeof(struct in9p_sc), M_IN9P_TRANS, M_WAITOK | M_ZERO);
 	chan->so = NULL;
 	sin = &chan->sin;
+	cv_init(&chan->in9p_rx_cv, "in9p_rx_cv");
+	cv_init(&chan->in9p_td_done, "in9p_td_done");
 
 	/* TODO: Deal with AF_INET6 */
 	host = strdup(mount_tag, M_TEMP);
@@ -205,17 +318,18 @@ in9p_create(const char *mount_tag, void **handlep)
 	STAILQ_INSERT_HEAD(&global_chan_list, chan, chan_next);
 	mtx_unlock(&global_chan_list_mtx);
 	IN9P_LOCK_INIT(chan);
+	chan->nreq = 0;
+	chan->broken = 0;
 
-	*handlep = (void *)chan;
 	free(host, M_TEMP);
+	*handlep = (void *)chan;
 
 	return (0);
 
 err:
-	if (chan->so != NULL) {
-		soclose(chan->so);
-		chan->so = NULL;
-	}
+	in9p_sock_clean(chan);
+	cv_destroy(&chan->in9p_rx_cv);
+	cv_destroy(&chan->in9p_td_done);
 	free(host, M_TEMP);
 	free(chan, M_IN9P_TRANS);
 	return (error);
@@ -230,24 +344,39 @@ in9p_close(void *handle)
 {
 	struct in9p_sc *chan = handle;
 
+	IN9P_XLOCK(chan);
 	mtx_lock(&global_chan_list_mtx);
 	STAILQ_REMOVE(&global_chan_list, chan, in9p_sc, chan_next);
 	mtx_unlock(&global_chan_list_mtx);
-	soclose(chan->so);
+
+	/* Remove the response-polling thread. */
+	if (chan->broken == 0) {
+		chan->broken = 1;
+		cv_signal(&chan->in9p_rx_cv);
+		cv_wait(&chan->in9p_td_done, IN9P_SX(chan));
+	}
+
+	/* Free the socket. */
+	in9p_sock_clean(chan);
+	IN9P_XUNLOCK(chan);
+
+	/* Finally un-init all other variables. */
 	IN9P_LOCK_DESTROY(chan);
+	cv_destroy(&chan->in9p_rx_cv);
+	cv_destroy(&chan->in9p_td_done);
 	free(chan, M_IN9P_TRANS);
 }
 
 /*
  * Avoid reading stale data by creating a new socket.
- * NB: Caller must hold channel lock.
+ * Caller must host channel lock.
  */
 static inline void
-in9p_sock_clean(struct in9p_sc *chan, int *error)
+in9p_sock_revive(struct in9p_sc *chan, int *error)
 {
-	soclose(chan->so);
-	chan->so = NULL;
-
+	cv_signal(&chan->in9p_rx_cv);
+	cv_wait(&chan->in9p_td_done, IN9P_SX(chan));
+	in9p_sock_clean(chan);
 	switch ((*error = in9p_sock_create(chan))) {
 	case (0):
 		break;
@@ -255,10 +384,11 @@ in9p_sock_clean(struct in9p_sc *chan, int *error)
 	case (ECONNREFUSED):
 	case (EHOSTDOWN):
 	case (ENETDOWN):
-		break;
+		/* Don't retry for now. */
+		printf("INET P9 transport: p9 server down\n");
 	default:
-		/* Bail for now. */
-		panic("INET P9 transport: failed to revive connection");
+		printf("INET P9 transport: failed to revive connection\n");
+		in9p_sock_clean(chan);
 	}
 }
 
@@ -270,7 +400,6 @@ in9p_reset_uio(struct uio *auio, struct iovec *iov)
 	auio->uio_iovcnt = 1;
 	auio->uio_offset = 0;
 	auio->uio_resid = iov->iov_len;
-	auio->uio_td = curthread;
 }
 
 static int
@@ -294,8 +423,6 @@ in9p_sock_read(struct socket *so, struct uio *auio, int *flags)
 
 /*
  * Request handler. This is called for every request submitted to the host.
- * Since the server sends responses on a STREAM socket without any locks,
- * we preemptively serialize requests to prevent intermingling of P9 packets.
  */
 static int
 in9p_request(void *handle, struct p9_req_t *req)
@@ -306,20 +433,31 @@ in9p_request(void *handle, struct p9_req_t *req)
 	struct uio auio;
 	size_t len;
 	int flags, error = 0;
+	u_long check = 0;
 
-	IN9P_XLOCK(chan);
+	if (atomic_load_acq_long(&chan->broken))
+		return (NOTCONN);
 	/*
 	 * TODO: Add conditional statements to p9fs_doio and p9fs_write to
 	 * pass the uiov for TWRITE instead of copying it out to io_buffer.
 	 */
+	atomic_add_acq_long(&chan->nreq, 1);
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_rw = UIO_WRITE;
+	auio->uio_td = curthread;
 	iov.iov_base = req->tc.sdata;
 	iov.iov_len = req->tc.size;
 	in9p_reset_uio(&auio, &iov);
 	if ((error = sosend(so, NULL, &auio, NULL, NULL, 0, curthread)) > 0 ||
 	   auio.uio_resid > 0)
-		goto clean;
+		goto checkout;
+
+	/* Wait for the upcall or timeout or another thread. */
+	IN9P_XLOCK(chan);
+	error = sx_sleep((void *)req->tc.tag, IN9P_SX(chan), 0,
+		   "in9p_request", in9p_ackmaxidle);
+	if (atomic_load_acq_long(&chan->broken) || error != 0)
+		goto checkout;
 
 	/* Read the response size. */
 	auio.uio_rw = UIO_READ;
@@ -327,7 +465,7 @@ in9p_request(void *handle, struct p9_req_t *req)
 	iov.iov_len = sizeof(req->rc.size);
 	in9p_reset_uio(&auio, &iov);
 	if ((error = in9p_sock_read(so, &auio, &flags)) != 0)
-		goto clean;
+		goto checkout;
 	req->rc.size = le32dec(req->rc.sdata);
 
 	/* For the same reasons as SMB, we choose to receive chunks. */
@@ -337,16 +475,34 @@ in9p_request(void *handle, struct p9_req_t *req)
 		in9p_reset_uio(&auio, &iov);
 		len -= iov.iov_len;
 		if ((error = in9p_sock_read(so, &auio, &flags)) != 0)
-			goto clean;
+			goto checkout;
 
 	}
 	IN9P_XUNLOCK(chan);
 
+	/* Poll for more responses. */
+	cv_signal(&chan->in9p_rx_cv);
+
 	return (error);
-clean:
-	in9p_sock_clean(chan, &error);
+checkout:
+	atomic_fcmpset_rel_long(&chan->broken, &check, 1);
+	if (atomic_fetchadd_long(&chan->nreq, -1) == 1) {
+		if (!IN9P_LOCKED(chan))
+			IN9P_XLOCK(chan);
+	} else {
+		IN9P_XUNLOCK(chan);
+		return (ECONNABORTED);
+	}
+
+	/* We're the last thread. Now cleanup. */
+	in9p_sock_revive(chan, &error);
+	if (error != 0) {
+		IN9P_XUNLOCK(chan);
+		return (error);
+	}
+	atomic_store_rel_long(&chan->broken, 0);
 	IN9P_XUNLOCK(chan);
-	return (error ? error : EPIPE);
+	return (EPIPE);
 }
 
 static struct p9_trans_module in9p_trans = {

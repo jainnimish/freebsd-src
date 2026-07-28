@@ -85,7 +85,7 @@ l9p_connection_free(struct l9p_connection *conn)
 	free(conn);
 }
 
-void
+int
 l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
     const size_t niov, void *aux)
 {
@@ -106,7 +106,7 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 		L9P_LOG(L9P_WARNING, "cannot unpack received message");
 		l9p_freefcall(&req->lr_req);
 		free(req);
-		return;
+		return (1);
 	}
 
 	if (ht_add(&conn->lc_requests, req->lr_req.hdr.tag, req)) {
@@ -114,7 +114,7 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 		    req->lr_req.hdr.tag);
 		l9p_freefcall(&req->lr_req);
 		free(req);
-		return;
+		return (1);
 	}
 
 	error = conn->lc_lt.lt_get_response_buffer(req,
@@ -126,7 +126,7 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 		ht_remove(&conn->lc_requests, req->lr_req.hdr.tag);
 		l9p_freefcall(&req->lr_req);
 		free(req);
-		return;
+		return (1);
 	}
 
 	/*
@@ -135,6 +135,8 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 	 * (it must do the latter for Tflush requests).
 	 */
 	l9p_threadpool_run(&conn->lc_tp, req);
+
+	return (0);
 }
 
 void
