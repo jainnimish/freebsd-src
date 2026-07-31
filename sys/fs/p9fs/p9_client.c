@@ -61,6 +61,8 @@ int p9_debug_level = 0;
 SYSCTL_INT(_vfs_p9fs, OID_AUTO, debug_level, CTLFLAG_RW,
     &p9_debug_level, 0, "p9fs debug logging");
 
+SYSCTL_NODE(_vfs, OID_AUTO, 9p, CTLFLAG_RW, 0, "9P File System Protocol");
+
 static struct p9_req_t *p9_get_request(struct p9_client *c, int *error);
 static struct p9_req_t *p9_client_request(
     struct p9_client *c, int8_t type, int *error, const char *fmt, ...);

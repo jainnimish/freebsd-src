@@ -199,10 +199,8 @@ l9p_socket_thread(void *arg)
 	size_t length;
 
 	for (;;) {
-		if (l9p_socket_readmsg(sc, &buf, &length) != 0) {
-			free(buf);
+		if (l9p_socket_readmsg(sc, &buf, &length) != 0)
 			break;
-		}
 
 		iov.iov_base = buf;
 		iov.iov_len = length;
@@ -232,6 +230,7 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 	ret = xread(fd, buffer, sizeof(uint32_t));
 	if (ret < 0) {
 		L9P_LOG(L9P_ERROR, "read(): %s", strerror(errno));
+		free(buffer);
 		return (-1);
 	}
 
@@ -242,6 +241,7 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 			L9P_LOG(L9P_ERROR,
 			    "short read: %zd bytes of %zd expected",
 			    ret, sizeof(uint32_t));
+		free(buffer);
 		return (-1);
 	}
 
@@ -252,12 +252,14 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 	ret = xread(fd, (char *)buffer + sizeof(uint32_t), toread);
 	if (ret < 0) {
 		L9P_LOG(L9P_ERROR, "read(): %s", strerror(errno));
+		free(buffer);
 		return (-1);
 	}
 
 	if (ret != (ssize_t)toread) {
 		L9P_LOG(L9P_ERROR, "short read: %zd bytes of %zd expected",
 		    ret, toread);
+		free(buffer);
 		return (-1);
 	}
 

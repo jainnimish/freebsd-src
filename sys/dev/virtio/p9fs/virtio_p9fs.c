@@ -86,12 +86,11 @@ static struct virtio_feature_desc virtio_9p_feature_desc[] = {
 
 VIRTIO_SIMPLE_PNPINFO(virtio_p9fs, VIRTIO_ID_9P, "VirtIO 9P Transport");
 
-SYSCTL_NODE(_vfs, OID_AUTO, 9p, CTLFLAG_RW, 0, "9P File System Protocol");
-
 /*
  * Maximum number of seconds vt9p_request thread sleep waiting for an
  * ack from the host, before exiting
  */
+SYSCTL_DECL(_vfs_9p);
 static unsigned int vt9p_ackmaxidle = 120;
 SYSCTL_UINT(_vfs_9p, OID_AUTO, ackmaxidle, CTLFLAG_RW, &vt9p_ackmaxidle, 0,
     "Maximum time request thread waits for ack from host");
