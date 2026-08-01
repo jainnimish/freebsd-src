@@ -74,7 +74,6 @@ struct p9_header {
 #define IN9P_QUEUED		(1 << 0)
 #define IN9P_INPROGRESS		(1 << 1)
 #define IN9P_DONE		(1 << 2)
-#define IN9P_DRAINED		(1 << 3)
 
 /* Tasks for the request queue. */
 struct in9p_task {
@@ -89,13 +88,11 @@ struct in9p_sc {
 	bool discon;			/* Teardown? */
 	bool wake;			/* Wake up request thread? */
 	bool td_running;		/* Receive thread running? */
-	size_t nreq;			/* Number of pending requests. */
 	struct socket *so;
 	struct sockaddr_in sin;
 	STAILQ_HEAD(,in9p_task) rxq;	/* Receive queue. */
 	struct mtx in9p_rx_mtx;		/* Mutex for receive queue. */
 	struct cv in9p_rx_cv;		/* Receive thread cond var. */
-	struct cv in9p_drain_ack;	/* Drained requests cond var. */
 	STAILQ_ENTRY(in9p_sc) chan_next;
 };
 
@@ -184,14 +181,10 @@ in9p_drain_req(struct in9p_sc *chan, int error)
 	chan->broken = 1;
 	STAILQ_FOREACH(tk, &chan->rxq, tk_next) {
 		tk->error = (error ? error : ECONNABORTED);
-		tk->status = IN9P_DONE | IN9P_DRAINED;
+		tk->status = IN9P_DONE;
 		wakeup(&tk->req->rc.tag);
 	}
 	STAILQ_INIT(&chan->rxq);
-
-	/* Wait till final acknowledgement. */
-	while (chan->nreq != 0)
-		cv_wait(&chan->in9p_drain_ack, IN9P_RX_MTX(chan));
 	IN9P_RX_UNLOCK(chan);
 }
 
@@ -213,10 +206,8 @@ in9p_receive_thread(void *arg)
 	for (;;) {
 		SOCK_RECVBUF_LOCK(so);
 		for (;;) {
-			if (chan->discon) {
-				SOCK_RECVBUF_UNLOCK(so);
+			if (chan->discon)
 				goto end;
-			}
 
 			/*
 			 * We don't and can't check for chan->broken here.
@@ -236,10 +227,8 @@ in9p_receive_thread(void *arg)
 				SOCK_RECVBUF_UNLOCK(so);
 				in9p_drain_req(chan, error);
 				SOCK_RECVBUF_LOCK(so);
-				if (chan->discon) {
-					SOCK_RECVBUF_UNLOCK(so);
+				if (chan->discon)
 					goto end;
-				}
 			} else if (sbavail(&(so)->so_rcv) >= so->so_rcv.sb_lowat) {
 				chan->wake = 0;
 				m_copydata(so->so_rcv.sb_mb, 0, sizeof(hdr), (void *)&hdr);
@@ -251,7 +240,7 @@ in9p_receive_thread(void *arg)
 			cv_wait(&chan->in9p_rx_cv, SOCK_RECVBUF_MTX(so));
 		}
 
-		/* Could be a timeout request, so kill. */
+		/* Could be a timed out request (tag reusable), so kill. */
 		if ((tk = in9p_fetch_tag(chan, &hdr)) == NULL) {
 			(void) sodisconnect(so);
 			error = EBADMSG;
@@ -298,9 +287,6 @@ in9p_receive_thread(void *arg)
 		IN9P_RX_UNLOCK(chan);
 	}
 end:
-	/* XXX- not sure if we can still have pending requests. */
-	in9p_drain_req(chan, error);
-	SOCK_RECVBUF_LOCK(so);
 	chan->td_running = 0;
 	cv_signal(&chan->in9p_rx_cv);
 	SOCK_RECVBUF_UNLOCK(so);
@@ -404,7 +390,6 @@ in9p_create(const char *mount_tag, void **handlep)
 	IN9P_RX_INIT(chan);
 	STAILQ_INIT(&chan->rxq);
 	cv_init(&chan->in9p_rx_cv, "in9p_rx_cv");
-	cv_init(&chan->in9p_drain_ack, "in9p_drain_ack");
 
 	/* TODO: Deal with AF_INET6 */
 	sin = &chan->sin;
@@ -461,7 +446,6 @@ err:
 	if (chan->so != NULL)
 		soclose(chan->so);
 	cv_destroy(&chan->in9p_rx_cv);
-	cv_destroy(&chan->in9p_drain_ack);
 	IN9P_RX_DESTROY(chan);
 	free(host, M_TEMP);
 	free(chan, M_IN9P_TRANS);
@@ -470,17 +454,12 @@ err:
 
 /*
  * This is called after vflush() and TCLUNKs are done.
- * XXX - Not sure if all requests must be completed by now.
+ * All requests will have completed by now.
  */
 static void
 in9p_close(void *handle)
 {
 	struct in9p_sc *chan = (struct in9p_sc *)handle;
-
-	/* Remove the handler. */
-	mtx_lock(&global_chan_list_mtx);
-	STAILQ_REMOVE(&global_chan_list, chan, in9p_sc, chan_next);
-	mtx_unlock(&global_chan_list_mtx);
 
 	/* Shutdown receive thread. */
 	SOCK_RECVBUF_LOCK(chan->so);
@@ -496,9 +475,13 @@ in9p_close(void *handle)
 
 	/* Finally un-init all other variables. */
 	cv_destroy(&chan->in9p_rx_cv);
-	cv_destroy(&chan->in9p_drain_ack);
 	IN9P_RX_DESTROY(chan);
+
+	/* Remove the handler. */
+	mtx_lock(&global_chan_list_mtx);
+	STAILQ_REMOVE(&global_chan_list, chan, in9p_sc, chan_next);
 	free(chan, M_IN9P_TRANS);
+	mtx_unlock(&global_chan_list_mtx);
 }
 
 /*
@@ -521,7 +504,6 @@ in9p_request(void *handle, struct p9_req_t *req)
 		tk.error = 0;
 		STAILQ_INSERT_TAIL(&chan->rxq, &tk, tk_next);
 		tk.status = IN9P_QUEUED;
-		chan->nreq++;
 	} else {
 		IN9P_RX_UNLOCK(chan);
 		return (ENOTCONN);
@@ -547,8 +529,8 @@ in9p_request(void *handle, struct p9_req_t *req)
 	IN9P_RX_LOCK(chan);
 	/* Response received before we could sleep. */
 	if (tk.status & IN9P_DONE) {
-		error = tk.error;
-		goto ok;
+		IN9P_RX_UNLOCK(chan);
+		return (tk.error);
 	}
 
 	/* Error from sosend(), request will never be in progress. */
@@ -560,18 +542,16 @@ in9p_request(void *handle, struct p9_req_t *req)
 	for (;;) {
 		error = msleep(&req->rc.tag, IN9P_RX_MTX(chan), PSOCK,
 		   "in9p_request", hz * in9p_netmaxidle);
-		if (tk.status & IN9P_DONE) {
-			error = tk.error;
-			goto ok;
-		}
+		if (tk.status & IN9P_DONE)
+			break;
 		if (error == EWOULDBLOCK && tk.status == IN9P_QUEUED)
 			goto clean;
 	}
+	IN9P_RX_UNLOCK(chan);
+
+	return (tk.error);
 clean:
 	STAILQ_REMOVE(&chan->rxq, &tk, in9p_task, tk_next);
-ok:
-	if(--chan->nreq == 0 && (tk.status & IN9P_DRAINED))
-		cv_signal(&chan->in9p_drain_ack);
 	IN9P_RX_UNLOCK(chan);
 	return (error);
 }
