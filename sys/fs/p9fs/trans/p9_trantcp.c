@@ -477,6 +477,11 @@ in9p_close(void *handle)
 {
 	struct in9p_sc *chan = (struct in9p_sc *)handle;
 
+	/* Remove the handler. */
+	mtx_lock(&global_chan_list_mtx);
+	STAILQ_REMOVE(&global_chan_list, chan, in9p_sc, chan_next);
+	mtx_unlock(&global_chan_list_mtx);
+
 	/* Shutdown receive thread. */
 	SOCK_RECVBUF_LOCK(chan->so);
 	chan->discon = 1;
@@ -494,11 +499,6 @@ in9p_close(void *handle)
 	cv_destroy(&chan->in9p_drain_ack);
 	IN9P_RX_DESTROY(chan);
 	free(chan, M_IN9P_TRANS);
-
-	/* Remove the handler. */
-	mtx_lock(&global_chan_list_mtx);
-	STAILQ_REMOVE(&global_chan_list, chan, in9p_sc, chan_next);
-	mtx_unlock(&global_chan_list_mtx);
 }
 
 /*
@@ -609,6 +609,7 @@ in9p_modevent(module_t mod, int type, void *unused)
 	case MOD_SHUTDOWN:
 		break;
 	default:
+		/* TODO: MOD_QUIESCE */
 		error = EOPNOTSUPP;
 		break;
 	}
