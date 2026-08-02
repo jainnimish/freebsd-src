@@ -114,6 +114,14 @@ SYSCTL_UINT(_vfs_9p, OID_AUTO, netmaxidle, CTLFLAG_RW, &in9p_netmaxidle, 0,
 #define P9_MTU 131072
 #define IN9P_SORECEIVE_CHUNK (1024 * 16)
 
+static inline void
+in9p_discon_so(struct socket *so)
+{
+	CURVNET_SET(so->so_vnet);
+	(void) sodisconnect(so);
+	CURVNET_RESTORE();
+}
+
 static int
 in9p_sock_upcall(struct socket *so, void *arg, int flags __unused)
 {
@@ -201,8 +209,6 @@ in9p_receive_thread(void *arg)
 	size_t len;
 	int error = 0;
 
-	CURVNET_SET(so->so_vnet);
-
 	for (;;) {
 		SOCK_RECVBUF_LOCK(so);
 		for (;;) {
@@ -242,7 +248,7 @@ in9p_receive_thread(void *arg)
 
 		/* Could be a timed out request (tag reusable), so kill. */
 		if ((tk = in9p_fetch_tag(chan, &hdr)) == NULL) {
-			(void) sodisconnect(so);
+			in9p_discon_so(so);
 			error = EBADMSG;
 			continue;
 		}
@@ -259,7 +265,7 @@ in9p_receive_thread(void *arg)
 		    (req->rc.size < sizeof(hdr))) {
 			if (error == 0)
 				error = EINVAL;
-			(void) sodisconnect(so);
+			in9p_discon_so(so);
 			goto done;
 		}
 
@@ -270,7 +276,7 @@ in9p_receive_thread(void *arg)
 			in9p_reset_uio(&auio, &iov);
 			len -= iov.iov_len;
 			if ((error = in9p_sock_read(so, &auio)) != 0) {
-				(void) sodisconnect(so);
+				in9p_discon_so(so);
 				break;
 			}
 		}
@@ -290,7 +296,6 @@ end:
 	chan->td_running = 0;
 	cv_signal(&chan->in9p_rx_cv);
 	SOCK_RECVBUF_UNLOCK(so);
-	CURVNET_RESTORE();
 	kthread_exit();
 }
 
@@ -522,7 +527,7 @@ in9p_request(void *handle, struct p9_req_t *req)
 	in9p_reset_uio(&auio, &iov);
 	error = sosend(so, NULL, &auio, NULL, NULL, 0, curthread);
 	if ((error != 0 && error != ENOBUFS) || auio.uio_resid > 0)
-		(void) sodisconnect(so);
+		in9p_discon_so(so);
 	if (auio.uio_resid > 0)
 		error = EPIPE;
 
@@ -598,11 +603,11 @@ in9p_modevent(module_t mod, int type, void *unused)
 }
 
 static moduledata_t in9p_mod = {
-	"p9_trantcp",
+	"inet_p9fs",
 	in9p_modevent,
 	NULL,
 };
-DECLARE_MODULE(p9_trantcp, in9p_mod, SI_SUB_VFS, SI_ORDER_ANY);
+DECLARE_MODULE(inet_p9fs, in9p_mod, SI_SUB_VFS, SI_ORDER_ANY);
 
-MODULE_VERSION(p9_trantcp, 1);
-MODULE_DEPEND(p9_trantcp, p9fs, 1, 1, 1);
+MODULE_VERSION(inet_p9fs, 1);
+MODULE_DEPEND(inet_p9fs, p9fs, 1, 1, 1);

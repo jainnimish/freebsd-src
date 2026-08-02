@@ -1,6 +1,6 @@
 .PATH: ${SRCTOP}/sys/fs/p9fs/trans
 
-KMOD=	p9_trantcp
-SRCS=	vnode_if.h p9_trantcp.c
+KMOD=	inet_p9fs
+SRCS=	vnode_if.h inet_p9fs.c
 
 .include <bsd.kmod.mk>
