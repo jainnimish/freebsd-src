@@ -91,8 +91,8 @@ VIRTIO_SIMPLE_PNPINFO(virtio_p9fs, VIRTIO_ID_9P, "VirtIO 9P Transport");
  * ack from the host, before exiting
  */
 SYSCTL_DECL(_vfs_9p);
-static unsigned int vt9p_ackmaxidle = 120;
-SYSCTL_UINT(_vfs_9p, OID_AUTO, ackmaxidle, CTLFLAG_RW, &vt9p_ackmaxidle, 0,
+static unsigned int vmaxidle = 120;
+SYSCTL_UINT(_vfs_9p, OID_AUTO, vmaxidle, CTLFLAG_RW, &vmaxidle, 0,
     "Maximum time request thread waits for ack from host");
 
 /*
@@ -107,13 +107,13 @@ vt9p_req_wait(struct vt9p_softc *chan, struct p9_req_t *req)
 	KASSERT(req->tc.tag != req->rc.tag,
 	    ("%s: request %p already completed", __func__, req));
 
-	if (msleep(req, VT9P_MTX(chan), 0, "chan lock", vt9p_ackmaxidle * hz)) {
+	if (msleep(req, VT9P_MTX(chan), 0, "chan lock", vmaxidle * hz)) {
 		/*
 		 * Waited for 120s. No response from host.
 		 * Can't wait for ever..
 		 */
 		P9_DEBUG(ERROR, "Timeout after waiting %u seconds"
-		    "for an ack from host\n", vt9p_ackmaxidle);
+		    "for an ack from host\n", vmaxidle);
 		return (EIO);
 	}
 	KASSERT(req->tc.tag == req->rc.tag,

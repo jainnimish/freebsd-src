@@ -106,8 +106,8 @@ MTX_SYSINIT(global_chan_list_mtx, &global_chan_list_mtx, "9p INET global", MTX_D
 static int trans_loaded = 0;
 
 SYSCTL_DECL(_vfs_9p);
-static unsigned int in9p_netmaxidle = 60;
-SYSCTL_UINT(_vfs_9p, OID_AUTO, netmaxidle, CTLFLAG_RW, &in9p_netmaxidle, 0,
+static unsigned int inet_imaxidle = 60;
+SYSCTL_UINT(_vfs_9p, OID_AUTO, imaxidle, CTLFLAG_RW, &inet_imaxidle, 0,
     "Maximum time to wait for P9 server to respond");
 
 /* No way to find out what clnt->msize is for now. */
@@ -215,11 +215,6 @@ in9p_receive_thread(void *arg)
 			if (chan->discon)
 				goto end;
 
-			/*
-			 * We don't and can't check for chan->broken here.
-			 * If in9p_request() calls sodisconnect(), eventually
-			 * socantrcvmore() will be called, and we will get here.
-			 */
 			if (so->so_error)
 				error = so->so_error;
 			else if (so->so_rerror)
@@ -282,7 +277,6 @@ in9p_receive_thread(void *arg)
 		}
 
 	done:
-		/* Wakeup whoseever tag it is. */
 		IN9P_RX_LOCK(chan);
 		tk->status = IN9P_DONE;
 		tk->error = error;
@@ -316,7 +310,7 @@ in9p_sock_create(struct in9p_sc *chan)
 		return (error);
 
 	bzero(&sopt, sizeof(sopt));
-	ts.tv_sec = in9p_netmaxidle;
+	ts.tv_sec = inet_imaxidle;
 	ts.tv_usec = 0;
 
 	/* Set the socket options. */
@@ -526,27 +520,20 @@ in9p_request(void *handle, struct p9_req_t *req)
 	iov.iov_len = req->tc.size;
 	in9p_reset_uio(&auio, &iov);
 	error = sosend(so, NULL, &auio, NULL, NULL, 0, curthread);
-	if ((error != 0 && error != ENOBUFS) || auio.uio_resid > 0)
-		in9p_discon_so(so);
-	if (auio.uio_resid > 0)
-		error = EPIPE;
 
 	IN9P_RX_LOCK(chan);
-	/* Response received before we could sleep. */
 	if (tk.status & IN9P_DONE) {
 		IN9P_RX_UNLOCK(chan);
 		return (tk.error);
 	}
 
 	/* Error from sosend(), request will never be in progress. */
-	if (error != 0 && error != ENOBUFS)
-		chan->broken = 1;
 	if (error != 0)
 		goto clean;
 
 	for (;;) {
 		error = msleep(&req->rc.tag, IN9P_RX_MTX(chan), PSOCK,
-		   "in9p_request", hz * in9p_netmaxidle);
+		   "in9p_request", hz * inet_imaxidle);
 		if (tk.status & IN9P_DONE)
 			break;
 		if (error == EWOULDBLOCK && tk.status == IN9P_QUEUED)
